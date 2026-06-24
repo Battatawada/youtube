@@ -25,6 +25,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Verify NotebookLM auth
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: notebooklm auth check --test
+
       - name: Phase 1 — NotebookLM
         env:
           NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
