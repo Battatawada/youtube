@@ -53,6 +53,7 @@ exec "${CHROME_DIR}/chrome" \
   --disable-breakpad \
   --no-first-run \
   --no-default-browser-check \
+  --load-extension=/opt/flowkit/extension \
   "$@"
 LAUNCHER
 chmod +x /usr/local/bin/chrome-flowkit
