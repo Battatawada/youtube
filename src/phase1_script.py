@@ -57,7 +57,7 @@ def ask(notebook_id: str, prompt: str, *, new: bool = False) -> str:
 
     cmd = ["notebooklm", "ask", prompt, "--notebook", notebook_id]
     if new:
-        cmd.append("--new")
+        cmd.extend(["--new", "--yes"])
     result = subprocess.run(
         cmd,
         capture_output=True,
