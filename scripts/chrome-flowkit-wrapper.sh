@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Chrome 149 for FlowKit — Oracle VPS / TigerVNC safe launcher.
-CHROME_DIR="/opt/chrome-flowkit"
+# Official Google Chrome — Oracle VPS / TigerVNC launcher (not Chromium).
+CHROME_BIN="/usr/bin/google-chrome-stable"
+[[ -x "$CHROME_BIN" ]] || CHROME_BIN="/usr/bin/google-chrome"
+
 export DISPLAY="${DISPLAY:-:1}"
 export GNOME_KEYRING_CONTROL=""
 export SSH_AUTH_SOCK=""
-exec "${CHROME_DIR}/chrome" \
+exec "${CHROME_BIN}" \
   --no-sandbox \
   --disable-setuid-sandbox \
   --disable-dev-shm-usage \
