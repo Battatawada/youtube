@@ -54,10 +54,14 @@ def extract_json_blocks(text: str) -> list[Any]:
         try:
             blocks.append(json.loads(chunk))
         except json.JSONDecodeError:
-            # Try to find array in text
-            match = re.search(r"(\[[\s\S]*\])", chunk)
-            if match:
-                blocks.append(json.loads(match.group(1)))
+            for pattern in (r"(\{[\s\S]*\})", r"(\[[\s\S]*\])"):
+                match = re.search(pattern, chunk)
+                if match:
+                    try:
+                        blocks.append(json.loads(match.group(1)))
+                        break
+                    except json.JSONDecodeError:
+                        continue
     if not blocks:
         raise ValueError("No JSON found in model response")
     return blocks
@@ -239,3 +243,14 @@ def parse_seo_json(text: str) -> dict:
         if isinstance(block, dict) and "title" in block:
             return block
     raise ValueError("No SEO JSON object in NotebookLM response")
+
+
+def fallback_seo(topic: str) -> dict:
+    """Minimal SEO metadata when NotebookLM returns non-JSON."""
+    title = topic[:65].strip()
+    return {
+        "title": title,
+        "description": f"{topic}\n\nMotivation and human psychology for a US audience.",
+        "tags": ["motivation", "psychology", "mindset", "self improvement"],
+        "hashtags": ["#motivation", "#psychology"],
+    }
