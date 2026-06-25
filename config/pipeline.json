@@ -7,7 +7,7 @@
   "words_per_minute": 140,
   "dedupe_image_prompts": true,
   "max_scenes": 60,
-  "tts_voices": ["en-US-EmilyNeural", "en-US-AndrewMultilingualNeural"],
+  "tts_voices": ["en-IE-EmilyNeural", "en-US-AndrewMultilingualNeural"],
   "tts_rate": "-5%",
   "max_zoom": 1.0
 }

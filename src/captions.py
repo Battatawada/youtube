@@ -10,8 +10,18 @@ WHITE = "&HFFFFFF&"
 YELLOW = "&H00D7FF&"
 BLACK = "&H000000&"
 
-EMILY = "en-US-EmilyNeural"
+EMILY = "en-IE-EmilyNeural"
 ANDREW = "en-US-AndrewMultilingualNeural"
+
+# Common misconfiguration — en-US-EmilyNeural is not a valid edge-tts voice.
+VOICE_ALIASES: dict[str, str] = {
+    "en-US-EmilyNeural": EMILY,
+    "en-US-Emily": EMILY,
+}
+
+
+def resolve_voice(name: str) -> str:
+    return VOICE_ALIASES.get(name, name)
 
 ASS_HEADER = """[Script Info]
 ScriptType: v4.00+

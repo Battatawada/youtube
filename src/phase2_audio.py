@@ -21,10 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import edge_tts
 
-from captions import EMILY, ANDREW, estimate_word_timings, merge_srt_blocks, pick_narrator_voice
+from captions import EMILY, ANDREW, estimate_word_timings, merge_srt_blocks, pick_narrator_voice, resolve_voice
 from common import CONFIG, clean_script_for_tts, load_json, save_json, split_script_for_scenes
 
 DEFAULT_VOICES = [EMILY, ANDREW]
+
+
+DEFAULT_VOICES = [EMILY, ANDREW]
+MAX_TTS_RETRIES = 4
 
 
 async def synthesize_with_captions(
@@ -34,25 +38,45 @@ async def synthesize_with_captions(
     if not text.strip():
         dest.write_bytes(b"")
         return "", []
-    communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
-    submaker = edge_tts.SubMaker()
-    words: list[dict[str, Any]] = []
-    with dest.open("wb") as audio_file:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_file.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                submaker.feed(chunk)
-                start = chunk["offset"] / 10_000_000
-                duration = chunk["duration"] / 10_000_000
-                words.append(
-                    {
-                        "text": chunk["text"],
-                        "start": round(start, 4),
-                        "end": round(start + duration, 4),
-                    }
-                )
-    return submaker.get_srt(), words
+
+    voice = resolve_voice(voice)
+    last_err: Exception | None = None
+
+    for attempt in range(MAX_TTS_RETRIES):
+        communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+        submaker = edge_tts.SubMaker()
+        words: list[dict[str, Any]] = []
+        try:
+            with dest.open("wb") as audio_file:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        audio_file.write(chunk["data"])
+                    elif chunk["type"] == "WordBoundary":
+                        submaker.feed(chunk)
+                        start = chunk["offset"] / 10_000_000
+                        duration = chunk["duration"] / 10_000_000
+                        words.append(
+                            {
+                                "text": chunk["text"],
+                                "start": round(start, 4),
+                                "end": round(start + duration, 4),
+                            }
+                        )
+            if dest.stat().st_size == 0:
+                raise edge_tts.exceptions.NoAudioReceived("TTS produced empty audio file")
+            return submaker.get_srt(), words
+        except edge_tts.exceptions.NoAudioReceived as exc:
+            last_err = exc
+            dest.unlink(missing_ok=True)
+            if attempt + 1 < MAX_TTS_RETRIES:
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
+
+    raise last_err or RuntimeError("TTS failed")
 
 
 def concat_audio(parts: list[Path], output: Path) -> None:
@@ -179,6 +203,7 @@ def main() -> None:
     voices = pipeline.get("tts_voices") or DEFAULT_VOICES
     if isinstance(voices, str):
         voices = [voices]
+    voices = [resolve_voice(v) for v in voices]
     rate = os.environ.get("TTS_RATE") or pipeline.get("tts_rate", "-5%")
 
     try:
