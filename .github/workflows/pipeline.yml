@@ -12,7 +12,7 @@ env:
 jobs:
   script-and-audio:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     outputs:
       run_id: ${{ steps.meta.outputs.run_id }}
     steps:
@@ -31,7 +31,12 @@ jobs:
       - name: Verify NotebookLM auth
         env:
           NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
-        run: notebooklm auth check --test --json
+        run: |
+          if [ -z "$NOTEBOOKLM_AUTH_JSON" ]; then
+            echo "NOTEBOOKLM_AUTH_JSON secret is empty. Run scripts/export_notebooklm_secret.ps1"
+            exit 1
+          fi
+          notebooklm auth check --test --json
 
       - name: Phase 1 — NotebookLM
         env:
@@ -107,7 +112,7 @@ jobs:
   render-and-upload:
     needs: [script-and-audio, wait-for-images]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -168,7 +173,7 @@ jobs:
 
   notify-failure:
     needs: [script-and-audio, wait-for-images, render-and-upload]
-    if: failure()
+    if: ${{ always() && (needs.script-and-audio.result == 'failure' || needs.wait-for-images.result == 'failure' || needs.render-and-upload.result == 'failure') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

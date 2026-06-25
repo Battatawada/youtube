@@ -25,10 +25,20 @@ from captions import EMILY, ANDREW, estimate_word_timings, merge_srt_blocks, pic
 from common import CONFIG, clean_script_for_tts, load_json, save_json, split_script_for_scenes
 
 DEFAULT_VOICES = [EMILY, ANDREW]
-
-
-DEFAULT_VOICES = [EMILY, ANDREW]
 MAX_TTS_RETRIES = 4
+EMPTY_SCENE_SEC = 0.35
+
+
+def write_silent_mp3(dest: Path, duration: float = EMPTY_SCENE_SEC) -> None:
+    """Placeholder audio so concat length matches scene_durations.json."""
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+            "-t", str(duration), "-c:a", "libmp3lame", "-q:a", "9", str(dest),
+        ],
+        check=True,
+        capture_output=True,
+    )
 
 
 async def synthesize_with_captions(
@@ -36,7 +46,7 @@ async def synthesize_with_captions(
 ) -> tuple[str, list[dict[str, Any]]]:
     """Synthesize MP3; return SRT block + word timings for karaoke overlay."""
     if not text.strip():
-        dest.write_bytes(b"")
+        write_silent_mp3(dest, EMPTY_SCENE_SEC)
         return "", []
 
     voice = resolve_voice(voice)
@@ -72,20 +82,30 @@ async def synthesize_with_captions(
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue
             raise
-        except Exception:
+        except Exception as exc:
             dest.unlink(missing_ok=True)
+            last_err = exc
+            transient = any(
+                s in str(exc).lower()
+                for s in ("timeout", "connect", "network", "503", "502", "429")
+            )
+            if transient and attempt + 1 < MAX_TTS_RETRIES:
+                await asyncio.sleep(2.0 * (attempt + 1))
+                continue
             raise
 
     raise last_err or RuntimeError("TTS failed")
 
 
 def concat_audio(parts: list[Path], output: Path) -> None:
-    valid = [p for p in parts if p.exists() and p.stat().st_size > 0]
-    if not valid:
+    if not parts:
         raise ValueError("No audio segments to concatenate")
+    missing = [p for p in parts if not p.exists() or p.stat().st_size == 0]
+    if missing:
+        raise ValueError(f"Missing or empty audio segments: {missing}")
     list_file = output.parent / "_concat_list.txt"
     with list_file.open("w", encoding="utf-8") as f:
-        for p in valid:
+        for p in parts:
             f.write(f"file '{p.resolve().as_posix()}'\n")
     subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(output)],

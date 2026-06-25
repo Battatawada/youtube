@@ -33,6 +33,7 @@ from common import (
     load_prompt,
     new_run_id,
     notebooklm_json,
+    notebooklm_json_with_retry,
     parse_image_prompt_lines,
     parse_seo_json,
     parse_total_parts,
@@ -90,7 +91,7 @@ def wait_sources(
 def ask(notebook_id: str, prompt: str, *, new: bool = False, retries: int = 4) -> str:
     import subprocess
 
-    cmd = ["notebooklm", "ask", prompt, "--notebook", notebook_id]
+    cmd = ["notebooklm", "ask", prompt, "--notebook", notebook_id, "--request-timeout", "180"]
     if new:
         cmd.extend(["--new", "--yes"])
     last_err = ""
@@ -104,18 +105,17 @@ def ask(notebook_id: str, prompt: str, *, new: bool = False, retries: int = 4) -
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         last_err = (result.stderr or result.stdout or "notebooklm ask failed").strip()
-        transient = any(
-            s in last_err.lower()
-            for s in (
-                "parseable chunks",
-                "empty response",
-                "streaming chat",
-                "timeout",
-                "temporarily",
-                "rate limit",
+        if attempt + 1 < retries and (
+            is_transient_notebooklm_error(last_err)
+            or any(
+                s in last_err.lower()
+                for s in (
+                    "parseable chunks",
+                    "empty response",
+                    "streaming chat",
+                )
             )
-        )
-        if transient and attempt + 1 < retries:
+        ):
             wait = 8 * (attempt + 1)
             print(f"  notebooklm ask retry {attempt + 2}/{retries} in {wait}s...", flush=True)
             time.sleep(wait)
@@ -220,7 +220,7 @@ def main() -> None:
         if not urls or "REPLACE" in str(urls[0]):
             sys.exit("Edit config/seed_urls.json with niche reference YouTube URLs")
 
-        created = notebooklm_json("create", f"{niche.get('name', 'Video')} {run_id}", "--use")
+        created = notebooklm_json_with_retry("create", f"{niche.get('name', 'Video')} {run_id}", "--use")
         notebook_id = extract_notebook_id(created)
 
         source_ids: list[str] = []
@@ -230,7 +230,7 @@ def main() -> None:
             if i:
                 time.sleep(source_add_delay)
             print(f"  Adding source {i + 1}/{len(urls)}...", flush=True)
-            added = notebooklm_json(
+            added = notebooklm_json_with_retry(
                 "source",
                 "add",
                 url,
@@ -244,7 +244,7 @@ def main() -> None:
         wait_sources(
             notebook_id,
             source_ids,
-            timeout=int(pipeline.get("source_wait_timeout", 900)),
+            timeout=int(pipeline.get("source_wait_timeout", 300)),
         )
 
         print("[Step 1–2] Topics...", flush=True)
@@ -268,6 +268,12 @@ def main() -> None:
         print("[Step 5] Image prompts (multi-part)...", flush=True)
         image_prompt = load_prompt("story_to_image.txt").replace("{duration_minutes}", str(duration))
         prompt_lines = collect_all_image_prompts(notebook_id, image_prompt, continue_word, new=True)
+        if len(prompt_lines) < 10:
+            print("  Warning: very few image prompts, retrying once...", flush=True)
+            prompt_lines = collect_all_image_prompts(
+                notebook_id, image_prompt + "\n\nGenerate at least 40 distinct prompts.", continue_word, new=True
+            )
+
         if pipeline.get("dedupe_image_prompts", True):
             before = len(prompt_lines)
             prompt_lines = dedupe_prompts(prompt_lines)
@@ -278,6 +284,9 @@ def main() -> None:
         prompt_lines = [p for p in prompt_lines if is_valid_image_prompt(p)]
         if len(prompt_lines) < before_filter:
             print(f"  Dropped {before_filter - len(prompt_lines)} junk image prompts", flush=True)
+
+        if len(prompt_lines) < 5:
+            sys.exit(f"Too few image prompts after filtering ({len(prompt_lines)}). Re-run pipeline.")
 
         max_scenes = int(pipeline.get("max_scenes", 60))
         before_cap = len(prompt_lines)

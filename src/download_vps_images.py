@@ -10,9 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import httpx
-
-from common import load_json
+from common import httpx_download_with_retry, httpx_get_json_with_retry, load_json
 
 
 def main() -> None:
@@ -34,21 +32,26 @@ def main() -> None:
         durations = load_json(args.durations)
         filenames = [d["file"] for d in durations]
     else:
-        status = httpx.get(f"{base}/runs/{args.run_id}/status", headers=headers, timeout=30.0)
-        status.raise_for_status()
-        total = status.json().get("total_scenes", 20)
+        status = httpx_get_json_with_retry(
+            f"{base}/runs/{args.run_id}/status",
+            headers=headers,
+            timeout=60.0,
+        )
+        total = status.get("total_scenes", 20)
         filenames = [f"scene_{i:02d}.png" for i in range(1, total + 1)]
 
     for name in filenames:
         dest = args.output / name
-        resp = httpx.get(
+        httpx_download_with_retry(
             f"{base}/runs/{args.run_id}/images/{name}",
+            dest,
             headers=headers,
-            timeout=120.0,
+            timeout=180.0,
+            retries=5,
         )
-        resp.raise_for_status()
-        dest.write_bytes(resp.content)
-        print(f"saved {dest}")
+        if dest.stat().st_size < 10_000:
+            raise RuntimeError(f"Downloaded image too small: {dest} ({dest.stat().st_size} bytes)")
+        print(f"saved {dest} ({dest.stat().st_size // 1024}KB)")
 
     print(f"Downloaded {len(filenames)} images")
 

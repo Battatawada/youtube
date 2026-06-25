@@ -10,9 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import httpx
-
-from common import append_github_output, load_json, new_run_id
+from common import append_github_output, httpx_post_json_with_retry, load_json, new_run_id
 
 
 def main() -> None:
@@ -39,16 +37,16 @@ def main() -> None:
         "entities": load_json(args.entities) if args.entities.exists() else [],
     }
 
-    resp = httpx.post(
+    data = httpx_post_json_with_retry(
         f"{base}/generate",
-        json=payload,
+        json_body=payload,
         headers={"Authorization": f"Bearer {secret}"},
-        timeout=60.0,
+        timeout=180.0,
+        retries=5,
     )
-    resp.raise_for_status()
     append_github_output("run_id", run_id)
     print(f"run_id={run_id}")
-    print(resp.json())
+    print(data)
 
 
 if __name__ == "__main__":

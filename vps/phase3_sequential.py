@@ -7,11 +7,12 @@ import json
 import os
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from flowkit_client import FlowKitClient
-from ref_loader import refs_dir_from_env, upload_references
+from ref_loader import refs_dir_from_env, upload_references, verify_references
 
 
 def _rewrite_prompt_safe(prompt: str) -> str:
@@ -95,6 +96,7 @@ class SequentialGenerator:
         }
 
     def _save_state(self, state: dict[str, Any]) -> None:
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
         self.on_progress(state)
@@ -130,7 +132,9 @@ class SequentialGenerator:
             state["phase"] = "refs"
             self._save_state(state)
 
-            ref_media = upload_references(refs_dir_from_env(), self.client, project_id=project_id)
+            refs_dir = refs_dir_from_env()
+            verify_references(refs_dir)
+            ref_media = upload_references(refs_dir, self.client, project_id=project_id)
             video_id = project_id  # FlowKit ties scenes to project context
 
             state["phase"] = "scenes"

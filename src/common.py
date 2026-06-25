@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -223,19 +224,125 @@ def append_github_output(key: str, value: str) -> None:
 
 
 def parse_total_parts(text: str) -> int:
-    match = re.search(r"Total Parts:\s*(\d+)", text, re.IGNORECASE)
+    match = re.search(r"Total (?:Parts|Scenes):\s*(\d+)", text, re.IGNORECASE)
     return int(match.group(1)) if match else 1
 
 
 def strip_total_parts_header(text: str) -> str:
     lines = text.strip().splitlines()
-    if lines and re.match(r"Total Parts:\s*\d+", lines[0], re.IGNORECASE):
+    if lines and re.match(r"Total (?:Parts|Scenes):\s*\d+", lines[0], re.IGNORECASE):
         return "\n".join(lines[1:]).strip()
     if lines and re.match(r"^Answer:\s*$", lines[0], re.IGNORECASE):
         lines = lines[1:]
-    if lines and re.match(r"Total Parts:\s*\d+", lines[0], re.IGNORECASE):
+    if lines and re.match(r"Total (?:Parts|Scenes):\s*\d+", lines[0], re.IGNORECASE):
         return "\n".join(lines[1:]).strip()
     return text.strip()
+
+
+def notebooklm_json_with_retry(*args: str, retries: int = 4) -> dict[str, Any]:
+    """notebooklm_json with retries on transient RPC/network errors."""
+    last_err = ""
+    for attempt in range(retries):
+        try:
+            return notebooklm_json(*args)
+        except RuntimeError as exc:
+            last_err = str(exc)
+            if attempt + 1 < retries and is_transient_notebooklm_error(last_err):
+                wait = 15 * (attempt + 1)
+                print(f"  notebooklm retry {attempt + 2}/{retries} in {wait}s...", flush=True)
+                time.sleep(wait)
+                continue
+            raise
+    raise RuntimeError(last_err)
+
+
+def is_transient_http_status(status_code: int) -> bool:
+    return status_code in {408, 429, 500, 502, 503, 504}
+
+
+def httpx_get_json_with_retry(url: str, *, headers: dict | None = None, timeout: float = 60.0, retries: int = 5):
+    import httpx
+
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            resp = httpx.get(url, headers=headers, timeout=timeout)
+            if resp.status_code in {502, 503, 504, 429} and attempt + 1 < retries:
+                time.sleep(min(60, 5 * (attempt + 1)))
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            retry = isinstance(exc, Exception) and (
+                "timeout" in str(exc).lower()
+                or "connect" in str(exc).lower()
+                or (hasattr(exc, "response") and getattr(exc.response, "status_code", 0) in {502, 503, 504, 429})
+            )
+            if retry and attempt + 1 < retries:
+                time.sleep(min(60, 5 * (attempt + 1)))
+                continue
+            raise
+    raise last_err or RuntimeError(f"GET failed: {url}")
+
+
+def httpx_post_json_with_retry(
+    url: str,
+    *,
+    json_body: dict,
+    headers: dict | None = None,
+    timeout: float = 120.0,
+    retries: int = 5,
+):
+    import httpx
+
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            resp = httpx.post(url, json=json_body, headers=headers, timeout=timeout)
+            if resp.status_code in {502, 503, 504, 429} and attempt + 1 < retries:
+                time.sleep(min(60, 5 * (attempt + 1)))
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            if attempt + 1 < retries and (
+                "timeout" in str(exc).lower() or "connect" in str(exc).lower()
+            ):
+                time.sleep(min(60, 5 * (attempt + 1)))
+                continue
+            raise
+    raise last_err or RuntimeError(f"POST failed: {url}")
+
+
+def httpx_download_with_retry(
+    url: str,
+    dest: Path,
+    *,
+    headers: dict | None = None,
+    timeout: float = 120.0,
+    retries: int = 5,
+) -> None:
+    import httpx
+
+    for attempt in range(retries):
+        try:
+            resp = httpx.get(url, headers=headers, timeout=timeout)
+            if resp.status_code in {502, 503, 504, 429} and attempt + 1 < retries:
+                time.sleep(min(60, 5 * (attempt + 1)))
+                continue
+            resp.raise_for_status()
+            dest.write_bytes(resp.content)
+            return
+        except Exception as exc:  # noqa: BLE001
+            if attempt + 1 < retries and (
+                "timeout" in str(exc).lower() or "connect" in str(exc).lower()
+            ):
+                time.sleep(min(60, 5 * (attempt + 1)))
+                continue
+            raise
+    raise RuntimeError(f"Download failed: {url}")
 
 
 def parse_image_prompt_lines(text: str) -> list[str]:
