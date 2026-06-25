@@ -30,6 +30,15 @@ def _start_flowkit_stack() -> None:
         subprocess.run(["bash", script], check=False)
 
 
+def _restart_flowkit_stack() -> None:
+    script = os.environ.get("FLOWKIT_RESTART_SCRIPT")
+    if script and Path(script).exists():
+        subprocess.run(["bash", script], check=False, timeout=180)
+        return
+    if os.environ.get("FLOWKIT_USE_SYSTEMD", "1") == "1":
+        subprocess.run(["systemctl", "restart", "flowkit-agent"], check=False)
+
+
 def _stop_flowkit_stack() -> None:
     if os.environ.get("FLOWKIT_USE_SYSTEMD", "1") == "1":
         return
@@ -102,7 +111,21 @@ class SequentialGenerator:
             state["phase"] = "project"
             self._save_state(state)
 
-            project_id = self.client.create_project(title=f"Niche {self.run_id}", story="")
+            project_id = None
+            for attempt in range(4):
+                try:
+                    project_id = self.client.create_project(title=f"Niche {self.run_id}", story="")
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if attempt >= 3:
+                        raise
+                    state["error"] = f"create_project retry {attempt + 1}: {exc}"
+                    self._save_state(state)
+                    _restart_flowkit_stack()
+                    self.client.ensure_ready(wait_sec=180)
+                    time.sleep(15 * (attempt + 1))
+            if not project_id:
+                raise RuntimeError("create_project failed after retries")
 
             state["phase"] = "refs"
             self._save_state(state)

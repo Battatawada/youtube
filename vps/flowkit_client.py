@@ -15,11 +15,14 @@ _UUID_RE = re.compile(
     re.IGNORECASE,
 )
 
+RETRYABLE_STATUS = {500, 502, 503, 504}
+
 
 class FlowKitClient:
     def __init__(self, base_url: str | None = None, timeout: float = 120.0) -> None:
         self.base_url = (base_url or os.environ.get("FLOWKIT_BASE_URL", "http://127.0.0.1:8100")).rstrip("/")
         self.timeout = timeout
+        self.max_retries = int(os.environ.get("FLOWKIT_API_RETRIES", "6"))
 
     def health(self) -> dict[str, Any]:
         with httpx.Client(timeout=self.timeout) as client:
@@ -27,26 +30,73 @@ class FlowKitClient:
             resp.raise_for_status()
             return resp.json()
 
-    def ensure_ready(self, wait_sec: int = 120) -> None:
+    def ensure_ready(self, wait_sec: int = 180) -> None:
+        """Wait until extension is connected and /api/projects responds."""
         deadline = time.time() + wait_sec
         last_error = ""
         while time.time() < deadline:
             try:
                 data = self.health()
-                if data.get("extension_connected"):
+                if not data.get("extension_connected"):
+                    last_error = "extension not connected — open Chrome, Flow tab, connect extension"
+                    time.sleep(5)
+                    continue
+                # Probe API (502 here means extension bridge is broken)
+                with httpx.Client(timeout=30.0) as client:
+                    probe = client.get(f"{self.base_url}/api/projects")
+                if probe.status_code in RETRYABLE_STATUS:
+                    last_error = f"GET /api/projects -> {probe.status_code}"
+                    time.sleep(5)
+                    continue
+                if probe.is_success or probe.status_code == 404:
                     return
-                last_error = "extension not connected"
+                last_error = f"GET /api/projects -> {probe.status_code}: {probe.text[:200]}"
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)
             time.sleep(5)
-        raise RuntimeError(f"FlowKit not ready: {last_error}")
+        raise RuntimeError(
+            f"FlowKit not ready after {wait_sec}s: {last_error}. "
+            "On VPS: VNC -> start-chrome-flowkit -> open labs.google/fx/tools/flow -> "
+            "curl http://127.0.0.1:8100/health must show extension_connected:true"
+        )
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        retries: int | None = None,
+    ) -> dict[str, Any]:
+        attempts = retries if retries is not None else self.max_retries
+        last_err = ""
+        for attempt in range(attempts):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.request(method, f"{self.base_url}{path}", json=json_body)
+                if resp.status_code in RETRYABLE_STATUS and attempt + 1 < attempts:
+                    last_err = f"{resp.status_code} {resp.text[:300]}"
+                    time.sleep(min(60, 10 * (attempt + 1)))
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in RETRYABLE_STATUS and attempt + 1 < attempts:
+                    last_err = f"{exc.response.status_code} {exc.response.text[:300]}"
+                    time.sleep(min(60, 10 * (attempt + 1)))
+                    continue
+                raise
+            except httpx.RequestError as exc:
+                last_err = str(exc)
+                if attempt + 1 < attempts:
+                    time.sleep(min(60, 10 * (attempt + 1)))
+                    continue
+                raise RuntimeError(f"FlowKit request failed: {last_err}") from exc
+        raise RuntimeError(f"FlowKit request failed after {attempts} attempts: {last_err}")
 
     def create_project(self, title: str, story: str = "") -> str:
         payload = {"name": title, "story": story or None}
-        with httpx.Client(timeout=self.timeout) as client:
-            resp = client.post(f"{self.base_url}/api/projects", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        data = self._request_json("POST", "/api/projects", json_body=payload)
         if "id" in data:
             return str(data["id"])
         if isinstance(data.get("project"), dict) and data["project"].get("id"):
@@ -59,10 +109,7 @@ class FlowKitClient:
             "project_id": project_id,
             "file_name": path.name,
         }
-        with httpx.Client(timeout=self.timeout) as client:
-            resp = client.post(f"{self.base_url}/api/flow/upload-image", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        data = self._request_json("POST", "/api/flow/upload-image", json_body=payload)
         media_id = data.get("media_id") or data.get("mediaId")
         if media_id:
             return str(media_id)
@@ -133,13 +180,7 @@ class FlowKitClient:
         if ref_media_ids:
             body["character_media_ids"] = ref_media_ids
 
-        with httpx.Client(timeout=self.timeout) as client:
-            resp = client.post(f"{self.base_url}/api/flow/generate-image", json=body)
-            if resp.is_error:
-                detail = resp.text[:500]
-                raise RuntimeError(f"FlowKit generate-image failed ({resp.status_code}): {detail}")
-            data = resp.json()
-
+        data = self._request_json("POST", "/api/flow/generate-image", json_body=body)
         image_url, media_id = self._extract_image_url(data)
         if not image_url and media_id:
             image_url = self.get_media_url(media_id)
@@ -148,10 +189,7 @@ class FlowKitClient:
         return image_url, media_id
 
     def get_media_url(self, media_id: str) -> str:
-        with httpx.Client(timeout=self.timeout) as client:
-            resp = client.get(f"{self.base_url}/api/flow/media/{media_id}")
-            resp.raise_for_status()
-            data = resp.json()
+        data = self._request_json("GET", f"/api/flow/media/{media_id}")
         for field in ("fifeUrl", "servingUri", "imageUri", "url"):
             url = data.get(field)
             if url:

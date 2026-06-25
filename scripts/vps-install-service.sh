@@ -23,6 +23,8 @@ NICHE_PORT=8765
 FLOWKIT_USE_SYSTEMD=1
 FLOWKIT_START_SCRIPT=${NICHE_ROOT}/scripts/start_flowkit.sh
 FLOWKIT_STOP_SCRIPT=${NICHE_ROOT}/scripts/stop_flowkit.sh
+FLOWKIT_RESTART_SCRIPT=${NICHE_ROOT}/scripts/restart_flowkit_stack.sh
+FLOWKIT_API_RETRIES=6
 EOF
 
 chown niche:niche "$NICHE_ROOT/.env"

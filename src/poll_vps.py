@@ -38,7 +38,14 @@ def main() -> None:
         if status == "complete":
             return
         if status == "failed":
-            sys.exit(f"VPS job failed: {data.get('error')}")
+            err = data.get("error") or "unknown error"
+            if "502" in str(err):
+                err += (
+                    " — FlowKit Chrome extension offline. On VPS (VNC): "
+                    "start-chrome-flowkit, open labs.google/fx/tools/flow, "
+                    "then bash /opt/niche/scripts/vps-preflight.sh"
+                )
+            sys.exit(f"VPS job failed: {err}")
         time.sleep(args.interval)
 
     sys.exit(f"Timeout after {args.timeout}s waiting for run {args.run_id}")
