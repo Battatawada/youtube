@@ -94,10 +94,25 @@ def wait_sources(
             raise RuntimeError(f"Source {sid} failed: {last_err}")
 
 
-def ask(notebook_id: str, prompt: str, *, new: bool = False, retries: int = 4) -> str:
+def ask(
+    notebook_id: str,
+    prompt: str,
+    *,
+    new: bool = False,
+    retries: int = 4,
+    request_timeout: int = 180,
+) -> str:
     import subprocess
 
-    cmd = ["notebooklm", "ask", prompt, "--notebook", notebook_id, "--request-timeout", "180"]
+    cmd = [
+        "notebooklm",
+        "ask",
+        prompt,
+        "--notebook",
+        notebook_id,
+        "--request-timeout",
+        str(request_timeout),
+    ]
     if new:
         cmd.extend(["--new", "--yes"])
     last_err = ""
@@ -176,18 +191,105 @@ def collect_multipart_text(
 
 
 def collect_all_image_prompts(
-    notebook_id: str, initial_prompt: str, continue_word: str = "Next", *, new: bool = False
+    notebook_id: str,
+    initial_prompt: str,
+    continue_word: str = "Next",
+    *,
+    new: bool = False,
+    retries: int = 6,
+    request_timeout: int = 300,
 ) -> list[str]:
-    first = ask(notebook_id, initial_prompt, new=new)
+    first = ask(
+        notebook_id,
+        initial_prompt,
+        new=new,
+        retries=retries,
+        request_timeout=request_timeout,
+    )
     total = parse_total_parts(first)
     all_prompts = parse_image_prompt_lines(first)
 
     for part_num in range(2, total + 1):
         print(f"  Image prompts part {part_num}/{total}...", flush=True)
-        cont = ask(notebook_id, continue_word)
+        cont = ask(
+            notebook_id,
+            continue_word,
+            retries=retries,
+            request_timeout=request_timeout,
+        )
         all_prompts.extend(parse_image_prompt_lines(cont))
 
     return all_prompts
+
+
+def build_image_prompt(
+    script: str,
+    *,
+    duration: int,
+    target_scene_count: int,
+    embed_script: bool = False,
+    max_script_chars: int = 4500,
+) -> str:
+    """Build image prompt. Prefer conversation context (no embed) to avoid huge asks."""
+    template = (
+        load_prompt("story_to_image.txt")
+        .replace("{duration_minutes}", str(duration))
+        .replace("{target_scene_count}", str(target_scene_count))
+    )
+    if embed_script:
+        excerpt = script[:max_script_chars].strip()
+        if len(script) > max_script_chars:
+            excerpt += "\n[Script continues to the ending in the notebook.]"
+        template = template.replace(
+            "Use ONLY the complete story script from our conversation above.",
+            "Use ONLY the narration script below.",
+        )
+        script_block = f"\n--- NARRATION SCRIPT ---\n{excerpt}\n"
+    else:
+        script_block = ""
+    return template.replace("{script_excerpt}", script_block)
+
+
+def collect_image_prompts_resilient(
+    notebook_id: str,
+    script: str,
+    *,
+    duration: int,
+    target_scene_count: int,
+    continue_word: str,
+) -> list[str]:
+    """Try story chat first (short ask), then fall back to embedded script chunks."""
+    strategies: list[tuple[str, bool, int]] = [
+        ("story chat", False, 0),
+        ("embedded script (4.5k chars)", True, 4500),
+        ("embedded script (2.5k chars)", True, 2500),
+    ]
+    last_err = ""
+    for label, embed, max_chars in strategies:
+        prompt = build_image_prompt(
+            script,
+            duration=duration,
+            target_scene_count=target_scene_count,
+            embed_script=embed,
+            max_script_chars=max_chars,
+        )
+        print(f"  Image prompts via {label}...", flush=True)
+        try:
+            lines = collect_all_image_prompts(
+                notebook_id,
+                prompt,
+                continue_word,
+                new=not embed,
+            )
+            if len(lines) >= max(5, target_scene_count // 4):
+                print(f"  -> {len(lines)} prompts from {label}", flush=True)
+                return lines
+            print(f"  Warning: only {len(lines)} prompts from {label}, trying next strategy...", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            last_err = str(exc)
+            print(f"  Warning: {label} failed ({exc})", flush=True)
+            time.sleep(10)
+    raise RuntimeError(last_err or "Image prompt generation failed after all strategies")
 
 
 def main() -> None:
@@ -283,19 +385,25 @@ def main() -> None:
         print("[Step 5] Image prompts (multi-part)...", flush=True)
         target_scene_count = estimate_scene_count(script, pipeline)
         print(f"  -> target {target_scene_count} scenes from {word_count} words", flush=True)
-        script_excerpt = script[:12000]
-        image_prompt = (
-            load_prompt("story_to_image.txt")
-            .replace("{duration_minutes}", str(duration))
-            .replace("{target_scene_count}", str(target_scene_count))
-            .replace("{script_excerpt}", script_excerpt)
+        prompt_lines = collect_image_prompts_resilient(
+            notebook_id,
+            script,
+            duration=duration,
+            target_scene_count=target_scene_count,
+            continue_word=continue_word,
         )
-        prompt_lines = collect_all_image_prompts(notebook_id, image_prompt, continue_word, new=True)
         if len(prompt_lines) < max(5, target_scene_count // 3):
-            print("  Warning: very few image prompts, retrying once...", flush=True)
+            print("  Warning: very few image prompts, retrying with explicit count...", flush=True)
+            extra = build_image_prompt(
+                script,
+                duration=duration,
+                target_scene_count=target_scene_count,
+                embed_script=True,
+                max_script_chars=4500,
+            )
             prompt_lines = collect_all_image_prompts(
                 notebook_id,
-                image_prompt + f"\n\nGenerate at least {target_scene_count} distinct prompts aligned to the script.",
+                extra + f"\n\nGenerate at least {target_scene_count} distinct prompts aligned to the script.",
                 continue_word,
                 new=True,
             )

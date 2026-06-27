@@ -1,6 +1,6 @@
 Act as a scene-by-scene 'Minimalist Stick Figure Line Art' visual breakdown engine.
 
-Use ONLY the narration script below. Do not invent scenes after the script ends. Do not summarize.
+Use ONLY the complete story script from our conversation above. Do not invent scenes after the script ends. Do not summarize.
 
 Target: exactly {target_scene_count} image prompts total (across all parts). One prompt per narrated beat — no filler, no recap montage at the end.
 
@@ -22,5 +22,4 @@ Blank line between prompts
 No visible text, scene numbers, or titles in the image
 Stop after Part 1 and wait for "Next"
 
---- NARRATION SCRIPT ---
 {script_excerpt}
