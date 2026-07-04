@@ -112,11 +112,8 @@ class SequentialGenerator:
 
     def run(self, scenes: list[dict[str, Any]], entities: list[dict[str, Any]] | None = None) -> None:
         state = self._load_state()
-        resuming = (
-            state.get("status") == "failed"
-            and int(state.get("images_ready", 0)) > 0
-            and int(state.get("images_ready", 0)) < len(scenes)
-        )
+        ready_before = int(state.get("images_ready", 0))
+        resuming = ready_before > 0 and ready_before < len(scenes)
         state["status"] = "running"
         state["total_scenes"] = len(scenes)
         if resuming:
@@ -217,8 +214,13 @@ class SequentialGenerator:
                     except Exception as exc:  # noqa: BLE001
                         last_err = str(exc)
                         prompt = _rewrite_prompt_safe(scene.get("prompt", ""))
-                        is_rate_limit = "429" in last_err
-                        wait = (120 * attempt) if is_rate_limit else self.delay
+                        is_throttled = "429" in last_err or "403" in last_err
+                        if "403" in last_err:
+                            wait = min(900, 300 * attempt)
+                        elif "429" in last_err:
+                            wait = 120 * attempt
+                        else:
+                            wait = self.delay
                         if attempt == self.max_retries:
                             state["status"] = "failed"
                             state["error"] = f"Scene {scene_id}: {last_err}"
@@ -227,7 +229,7 @@ class SequentialGenerator:
                             raise
                         print(
                             f"Scene {scene_id} retry {attempt}/{self.max_retries} "
-                            f"({'rate limit' if is_rate_limit else 'error'}), wait {wait}s",
+                            f"({'Flow throttle' if is_throttled else 'error'}), wait {wait}s",
                             flush=True,
                         )
                         time.sleep(wait)
