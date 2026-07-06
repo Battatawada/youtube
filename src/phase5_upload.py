@@ -86,6 +86,10 @@ def build_upload_status(upload_rules: dict[str, Any]) -> dict[str, Any]:
             "YOUTUBE_SELF_DECLARED_MADE_FOR_KIDS",
             bool(upload_rules.get("self_declared_made_for_kids", False)),
         ),
+        "containsSyntheticMedia": _env_bool(
+            "YOUTUBE_CONTAINS_SYNTHETIC_MEDIA",
+            bool(upload_rules.get("contains_synthetic_media", False)),
+        ),
     }
 
 
@@ -199,6 +203,7 @@ def main() -> None:
                 "title": title,
                 "privacy": upload_status.get("privacyStatus"),
                 "made_for_kids": upload_status.get("madeForKids"),
+                "contains_synthetic_media": upload_status.get("containsSyntheticMedia"),
             }
         )
     )
