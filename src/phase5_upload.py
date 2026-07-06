@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -62,6 +63,32 @@ def merge_tags(seo: dict, rules: dict) -> list[str]:
     return merged
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_upload_status(upload_rules: dict[str, Any]) -> dict[str, Any]:
+    """YouTube videos.insert status — avoids Studio 'made for kids' / visibility surprises."""
+    return {
+        "privacyStatus": os.environ.get(
+            "YOUTUBE_PRIVACY", upload_rules.get("privacy", "public")
+        ),
+        "embeddable": upload_rules.get("embeddable", True),
+        "license": upload_rules.get("license", "youtube"),
+        "publicStatsViewable": upload_rules.get("public_stats_viewable", True),
+        "madeForKids": _env_bool(
+            "YOUTUBE_MADE_FOR_KIDS", bool(upload_rules.get("made_for_kids", False))
+        ),
+        "selfDeclaredMadeForKids": _env_bool(
+            "YOUTUBE_SELF_DECLARED_MADE_FOR_KIDS",
+            bool(upload_rules.get("self_declared_made_for_kids", False)),
+        ),
+    }
+
+
 def probe_video_duration_sec(path: Path) -> float:
     import subprocess
 
@@ -100,8 +127,8 @@ def main() -> None:
 
     rules = load_json(CONFIG / "channel_rules.json") if (CONFIG / "channel_rules.json").exists() else {}
     upload_rules = rules.get("upload", {})
-    privacy = os.environ.get("YOUTUBE_PRIVACY", upload_rules.get("privacy", "private"))
-    category = os.environ.get("YOUTUBE_CATEGORY_ID", upload_rules.get("category_id", "22"))
+    category = os.environ.get("YOUTUBE_CATEGORY_ID", upload_rules.get("category_id", "27"))
+    upload_status = build_upload_status(upload_rules)
 
     seo = load_json(args.seo) if args.seo.exists() else {}
     meta = load_json(args.metadata) if args.metadata.exists() else {}
@@ -117,7 +144,10 @@ def main() -> None:
         tags = tags[:10]
 
     max_upload_sec = float(
-        os.environ.get("YOUTUBE_MAX_DURATION_SEC", str(DEFAULT_MAX_UPLOAD_SEC))
+        os.environ.get(
+            "YOUTUBE_MAX_DURATION_SEC",
+            str(upload_rules.get("max_duration_sec", DEFAULT_MAX_UPLOAD_SEC)),
+        )
     )
     duration_sec = probe_video_duration_sec(args.video)
     print(
@@ -131,8 +161,8 @@ def main() -> None:
     if duration_sec > max_upload_sec:
         sys.exit(
             f"Video is {duration_sec / 60:.1f} min — exceeds YouTube limit of "
-            f"{max_upload_sec / 60:.0f} min for unverified channels. "
-            "Verify phone at youtube.com/verify, or shorten the script in phase 1. "
+            f"{max_upload_sec / 60:.0f} min limit. "
+            "Shorten the script in phase 1 or raise upload.max_duration_sec. "
             "Artifact final_video.mp4 is still saved for manual upload."
         )
 
@@ -146,8 +176,10 @@ def main() -> None:
             "defaultLanguage": "en",
             "defaultAudioLanguage": "en",
         },
-        "status": {"privacyStatus": privacy},
+        "status": upload_status,
     }
+
+    print(json.dumps({"upload_status": upload_status, "category_id": category}))
 
     media = MediaFileUpload(str(args.video), chunksize=-1, resumable=True, mimetype="video/mp4")
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
@@ -159,7 +191,17 @@ def main() -> None:
             print(f"Upload {int(status.progress() * 100)}%")
 
     video_id = response["id"]
-    print(json.dumps({"video_id": video_id, "url": f"https://youtu.be/{video_id}", "title": title}))
+    print(
+        json.dumps(
+            {
+                "video_id": video_id,
+                "url": f"https://youtu.be/{video_id}",
+                "title": title,
+                "privacy": upload_status.get("privacyStatus"),
+                "made_for_kids": upload_status.get("madeForKids"),
+            }
+        )
+    )
 
     if args.captions.exists():
         try:

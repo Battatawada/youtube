@@ -20,7 +20,13 @@
     "description_footer": "About Mind in Minutes\nWhy we think, feel, and act the way we do — in about 15 minutes. Psychology and human behavior explainers with stick-figure storytelling.\n\nSubscribe for new videos every week.\nhttps://www.youtube.com/@mindinminutes01\n\n#psychology #humanbehavior #mindinminutes"
   },
   "upload": {
-    "privacy": "private",
-    "category_id": "22"
+    "privacy": "public",
+    "category_id": "27",
+    "made_for_kids": false,
+    "self_declared_made_for_kids": false,
+    "embeddable": true,
+    "license": "youtube",
+    "public_stats_viewable": true,
+    "max_duration_sec": 1200
   }
 }
