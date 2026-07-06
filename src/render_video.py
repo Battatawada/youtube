@@ -286,7 +286,8 @@ def main() -> None:
             "-shortest", str(final),
         ]
     )
-    print(f"Wrote {final}")
+    dur_sec = _probe_duration(final)
+    print(f"Wrote {final} ({dur_sec / 60:.1f} min)")
 
 
 if __name__ == "__main__":

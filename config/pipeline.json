@@ -17,6 +17,7 @@
   "tts_voices": ["en-IE-EmilyNeural", "en-US-AndrewMultilingualNeural"],
   "tts_rate": "-5%",
   "max_zoom": 1.0,
+  "max_duration_drift_sec": 120,
   "end_card": {
     "enabled": true,
     "image": "config/end_card/subscribe.png",

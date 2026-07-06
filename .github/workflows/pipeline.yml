@@ -181,6 +181,20 @@ jobs:
       - name: Phase 4 — ffmpeg render
         run: python src/render_video.py output
 
+      - name: Upload final video artifact (before YouTube — survives upload failures)
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-video
+          path: |
+            output/final_video.mp4
+            output/thumbnail.png
+            output/captions.srt
+            output/word_timings.json
+            output/script.txt
+            output/script_clean.txt
+            output/metadata.json
+          if-no-files-found: error
+
       - name: Phase 5 — YouTube upload (optional)
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -197,38 +211,6 @@ jobs:
             --seo output/youtube_seo.json \
             --captions output/captions.srt \
             --thumbnail output/thumbnail.png
-
-      - uses: actions/upload-artifact@v4
-        id: upload-final-video
-        continue-on-error: true
-        with:
-          name: final-video
-          path: |
-            output/final_video.mp4
-            output/thumbnail.png
-            output/captions.srt
-            output/word_timings.json
-            output/script.txt
-            output/script_clean.txt
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        id: upload-final-video-retry
-        if: steps.upload-final-video.outcome == 'failure'
-        with:
-          name: final-video
-          path: |
-            output/final_video.mp4
-            output/thumbnail.png
-            output/captions.srt
-            output/word_timings.json
-            output/script.txt
-            output/script_clean.txt
-          if-no-files-found: error
-
-      - name: Fail if artifact upload failed
-        if: steps.upload-final-video.outcome != 'success' && steps.upload-final-video-retry.outcome != 'success'
-        run: exit 1
 
       - name: Alert on success
         if: success()

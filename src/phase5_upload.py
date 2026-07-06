@@ -17,6 +17,15 @@ from googleapiclient.http import MediaFileUpload
 
 from common import CONFIG, load_json, sanitize_seo_title
 
+# Unverified YouTube channels cannot publish videos longer than 15 minutes.
+DEFAULT_MAX_UPLOAD_SEC = 15 * 60
+
+# Must match scopes granted in scripts/youtube_oauth_refresh.py
+YOUTUBE_SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+]
+
 
 def build_youtube():
     creds = Credentials(
@@ -25,6 +34,7 @@ def build_youtube():
         token_uri="https://oauth2.googleapis.com/token",
         client_id=os.environ["YOUTUBE_CLIENT_ID"],
         client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
+        scopes=YOUTUBE_SCOPES,
     )
     return build("youtube", "v3", credentials=creds)
 
@@ -50,6 +60,29 @@ def merge_tags(seo: dict, rules: dict) -> list[str]:
             seen.add(key)
             merged.append(str(tag).strip())
     return merged
+
+
+def probe_video_duration_sec(path: Path) -> float:
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or "ffprobe failed")
+    return float(result.stdout.strip())
 
 
 def main() -> None:
@@ -83,6 +116,26 @@ def main() -> None:
     if tag_char_count(tags) > 500:
         tags = tags[:10]
 
+    max_upload_sec = float(
+        os.environ.get("YOUTUBE_MAX_DURATION_SEC", str(DEFAULT_MAX_UPLOAD_SEC))
+    )
+    duration_sec = probe_video_duration_sec(args.video)
+    print(
+        json.dumps(
+            {
+                "video_duration_sec": round(duration_sec, 1),
+                "max_upload_sec": max_upload_sec,
+            }
+        )
+    )
+    if duration_sec > max_upload_sec:
+        sys.exit(
+            f"Video is {duration_sec / 60:.1f} min — exceeds YouTube limit of "
+            f"{max_upload_sec / 60:.0f} min for unverified channels. "
+            "Verify phone at youtube.com/verify, or shorten the script in phase 1. "
+            "Artifact final_video.mp4 is still saved for manual upload."
+        )
+
     youtube = build_youtube()
     body = {
         "snippet": {
@@ -109,33 +162,55 @@ def main() -> None:
     print(json.dumps({"video_id": video_id, "url": f"https://youtu.be/{video_id}", "title": title}))
 
     if args.captions.exists():
-        cap_body = {
-            "snippet": {
-                "videoId": video_id,
-                "language": "en",
-                "name": "English (auto)",
-                "isDraft": False,
+        try:
+            cap_body = {
+                "snippet": {
+                    "videoId": video_id,
+                    "language": "en",
+                    "name": "English (auto)",
+                    "isDraft": False,
+                }
             }
-        }
-        cap_media = MediaFileUpload(
-            str(args.captions), mimetype="application/x-subrip", resumable=True
-        )
-        cap_req = youtube.captions().insert(
-            part="snippet",
-            body=cap_body,
-            media_body=cap_media,
-            sync=True,
-        )
-        cap_resp = cap_req.execute()
-        print(json.dumps({"caption_id": cap_resp.get("id"), "language": "en"}))
+            cap_media = MediaFileUpload(
+                str(args.captions), mimetype="application/x-subrip", resumable=True
+            )
+            cap_req = youtube.captions().insert(
+                part="snippet",
+                body=cap_body,
+                media_body=cap_media,
+                sync=True,
+            )
+            cap_resp = cap_req.execute()
+            print(json.dumps({"caption_id": cap_resp.get("id"), "language": "en"}))
+        except Exception as exc:  # noqa: BLE001
+            print(
+                json.dumps(
+                    {
+                        "caption_upload": "failed",
+                        "error": str(exc),
+                        "fix": (
+                            "Re-run scripts/youtube_oauth_refresh.py (needs youtube.force-ssl "
+                            "scope), update YOUTUBE_REFRESH_TOKEN secret, re-upload captions "
+                            "manually in YouTube Studio if needed."
+                        ),
+                    }
+                ),
+                file=sys.stderr,
+            )
     else:
         print("No captions.srt — skipped caption upload")
 
     if args.thumbnail.exists() and args.thumbnail.stat().st_size >= 10_000:
-        thumb_media = MediaFileUpload(str(args.thumbnail), mimetype="image/png", resumable=True)
-        thumb_req = youtube.thumbnails().set(videoId=video_id, media_body=thumb_media)
-        thumb_resp = thumb_req.execute()
-        print(json.dumps({"thumbnail_upload": "ok", "items": len(thumb_resp.get("items", []))}))
+        try:
+            thumb_media = MediaFileUpload(str(args.thumbnail), mimetype="image/png", resumable=True)
+            thumb_req = youtube.thumbnails().set(videoId=video_id, media_body=thumb_media)
+            thumb_resp = thumb_req.execute()
+            print(json.dumps({"thumbnail_upload": "ok", "items": len(thumb_resp.get("items", []))}))
+        except Exception as exc:  # noqa: BLE001
+            print(
+                json.dumps({"thumbnail_upload": "failed", "error": str(exc)}),
+                file=sys.stderr,
+            )
     else:
         print("No thumbnail.png — skipped custom thumbnail upload")
 

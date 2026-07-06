@@ -240,7 +240,17 @@ async def run_phase(
     meta["tts_voices"] = voices
     target = meta.get("duration_minutes", 0) * 60
     if target:
-        meta["duration_drift_sec"] = round(meta["total_audio_sec"] - target, 1)
+        drift = round(meta["total_audio_sec"] - target, 1)
+        meta["duration_drift_sec"] = drift
+        pipeline_path = CONFIG / "pipeline.json"
+        pipeline_cfg = load_json(pipeline_path) if pipeline_path.exists() else {}
+        max_drift = float(pipeline_cfg.get("max_duration_drift_sec", 120))
+        if abs(drift) > max_drift:
+            raise RuntimeError(
+                f"Audio length {meta['total_audio_sec']}s drifts {drift:+.0f}s from "
+                f"target {target}s (max {max_drift}s). Shorten the NotebookLM script "
+                f"or lower max_scenes — long videos fail on unverified YouTube channels."
+            )
     save_json(output_dir / "metadata.json", meta)
 
 

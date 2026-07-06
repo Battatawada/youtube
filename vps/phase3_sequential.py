@@ -15,6 +15,51 @@ from typing import Any, Callable
 from flowkit_client import FlowKitClient
 from ref_loader import refs_dir_from_env, upload_references, verify_references
 
+CHROME_NETWORK_SCRIPT = Path(
+    os.environ.get("CHROME_NETWORK_SCRIPT", "/opt/niche/scripts/vps-chrome-network.sh")
+)
+FLOW_403_FAILOVER = os.environ.get("FLOW_403_FAILOVER", "1") != "0"
+
+
+def _read_chrome_network_mode() -> str:
+    env_path = Path(os.environ.get("CHROME_ENV_PATH", "/opt/niche/chrome.env"))
+    if not env_path.is_file():
+        return "proxy"
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("CHROME_NETWORK_MODE="):
+            return line.split("=", 1)[1].strip().strip('"') or "proxy"
+    return "proxy"
+
+
+def _switch_chrome_network(target_mode: str) -> bool:
+    """proxy|direct — restarts Chrome + FlowKit. Requires passwordless sudo for niche."""
+    if not FLOW_403_FAILOVER:
+        return False
+    script = CHROME_NETWORK_SCRIPT
+    if not script.is_file():
+        print(f"Chrome network script missing: {script}", flush=True)
+        return False
+    print(f"403 failover: switching Chrome network -> {target_mode}", flush=True)
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", str(script), target_mode],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"Chrome network switch failed: {exc}", flush=True)
+        return False
+    if proc.stdout:
+        print(proc.stdout.rstrip(), flush=True)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "unknown error").strip()
+        print(f"Chrome network switch failed ({proc.returncode}): {err}", flush=True)
+        return False
+    return True
+
 
 def _rewrite_prompt_safe(prompt: str) -> str:
     """Light touch rewrite for safety filter retries."""
@@ -124,6 +169,8 @@ class SequentialGenerator:
                 print(f"Resume cooldown {cooldown}s (Flow 429 recovery)", flush=True)
                 time.sleep(cooldown)
             print(f"Resuming run {self.run_id} from {state.get('images_ready', 0)}/{len(scenes)} images", flush=True)
+        if "chrome_network_mode" not in state:
+            state["chrome_network_mode"] = _read_chrome_network_mode()
         self._save_state(state)
 
         _start_flowkit_stack()
@@ -194,7 +241,9 @@ class SequentialGenerator:
                 prompt = _sanitize_prompt(scene.get("prompt", ""), scene_id)
 
                 last_err = ""
-                for attempt in range(1, self.max_retries + 1):
+                attempt = 0
+                while attempt < self.max_retries:
+                    attempt += 1
                     try:
                         image_url, _ = self.client.generate_scene_image(
                             project_id=project_id,
@@ -214,6 +263,18 @@ class SequentialGenerator:
                     except Exception as exc:  # noqa: BLE001
                         last_err = str(exc)
                         prompt = _rewrite_prompt_safe(scene.get("prompt", ""))
+                        mode = state.get("chrome_network_mode", _read_chrome_network_mode())
+                        if (
+                            "403" in last_err
+                            and mode == "proxy"
+                            and _switch_chrome_network("direct")
+                        ):
+                            state["chrome_network_mode"] = "direct"
+                            self._save_state(state)
+                            self.client.ensure_ready(wait_sec=180)
+                            attempt -= 1
+                            time.sleep(30)
+                            continue
                         is_throttled = "429" in last_err or "403" in last_err
                         if "403" in last_err:
                             wait = min(900, 300 * attempt)
@@ -221,7 +282,7 @@ class SequentialGenerator:
                             wait = 120 * attempt
                         else:
                             wait = self.delay
-                        if attempt == self.max_retries:
+                        if attempt >= self.max_retries:
                             state["status"] = "failed"
                             state["error"] = f"Scene {scene_id}: {last_err}"
                             state["failed_scenes"].append(scene_id)
@@ -296,7 +357,15 @@ class SequentialGenerator:
                 print(f"Thumbnail saved {dest}", flush=True)
                 return
             except Exception as exc:  # noqa: BLE001
-                is_rate_limit = "429" in str(exc)
+                last_err = str(exc)
+                mode = state.get("chrome_network_mode", _read_chrome_network_mode())
+                if "403" in last_err and mode == "proxy" and _switch_chrome_network("direct"):
+                    state["chrome_network_mode"] = "direct"
+                    self._save_state(state)
+                    self.client.ensure_ready(wait_sec=180)
+                    time.sleep(30)
+                    continue
+                is_rate_limit = "429" in last_err or "403" in last_err
                 wait = (120 * attempt) if is_rate_limit else self.delay
                 if attempt == self.max_retries:
                     print(f"Thumbnail generation failed (non-fatal): {exc}", flush=True)

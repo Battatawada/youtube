@@ -1,5 +1,6 @@
 .env
 client_secret*.json
+xray/
 auth.json
 context.md
 output/
