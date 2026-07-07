@@ -293,7 +293,10 @@ class SequentialGenerator:
                             f"({'Flow throttle' if is_throttled else 'error'}), wait {wait}s",
                             flush=True,
                         )
+                        state["error"] = f"Scene {scene_id} retry {attempt}: {last_err}"
+                        self._save_state(state)
                         time.sleep(wait)
+                        state["error"] = None
 
                 time.sleep(self.delay)
 

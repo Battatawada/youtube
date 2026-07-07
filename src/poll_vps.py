@@ -33,6 +33,8 @@ def main() -> None:
     headers = {"Authorization": f"Bearer {secret}"}
     deadline = time.time() + args.timeout
     stale_since: float | None = None
+    last_ready = -1
+    last_progress_at = time.time()
 
     while time.time() < deadline:
         try:
@@ -51,7 +53,9 @@ def main() -> None:
         ready = data.get("images_ready", 0)
         total = data.get("total_scenes", 0)
         phase = data.get("phase", "")
-        print(f"status={status} phase={phase} images={ready}/{total}", flush=True)
+        current_scene = data.get("current_scene", "")
+        scene_suffix = f" scene={current_scene}" if current_scene else ""
+        print(f"status={status} phase={phase} images={ready}/{total}{scene_suffix}", flush=True)
 
         err = data.get("error")
         if err:
@@ -91,8 +95,23 @@ def main() -> None:
             except ValueError:
                 recently_active = False
 
-        if status == "running" and ready > 0:
+        if ready > last_ready:
+            last_ready = ready
+            last_progress_at = time.time()
             stale_since = None
+        elif phase == "scenes" and status == "running" and ready > 0:
+            stall_sec = time.time() - last_progress_at
+            if stall_sec > 1200:
+                hint = ""
+                if err and any(code in str(err) for code in ("403", "429", "401", "502")):
+                    hint = " Likely Flow throttle or auth — check VPS logs / VNC / preflight."
+                sys.exit(
+                    f"VPS job stalled at {ready}/{total} images for {int(stall_sec // 60)}+ minutes "
+                    f"(scene {current_scene}).{hint} Resume with same run_id after fixing FlowKit."
+                )
+
+        if status == "running" and ready > 0:
+            pass  # progress tracked above
         elif phase in SETUP_PHASES:
             stale_since = None
         elif recently_active:
