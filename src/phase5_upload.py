@@ -144,6 +144,12 @@ def main() -> None:
     if tag_char_count(tags) > 500:
         tags = tags[:10]
 
+    if not args.thumbnail.exists() or args.thumbnail.stat().st_size < 10_000:
+        sys.exit(
+            "Missing or too-small thumbnail.png — custom thumbnail is required before upload. "
+            f"path={args.thumbnail} exists={args.thumbnail.exists()}"
+        )
+
     duration_sec = probe_video_duration_sec(args.video)
     print(json.dumps({"video_duration_sec": round(duration_sec, 1), "video_duration_min": round(duration_sec / 60, 1)}))
 
@@ -224,19 +230,17 @@ def main() -> None:
     else:
         print("No captions.srt — skipped caption upload")
 
-    if args.thumbnail.exists() and args.thumbnail.stat().st_size >= 10_000:
-        try:
-            thumb_media = MediaFileUpload(str(args.thumbnail), mimetype="image/png", resumable=True)
-            thumb_req = youtube.thumbnails().set(videoId=video_id, media_body=thumb_media)
-            thumb_resp = thumb_req.execute()
-            print(json.dumps({"thumbnail_upload": "ok", "items": len(thumb_resp.get("items", []))}))
-        except Exception as exc:  # noqa: BLE001
-            print(
-                json.dumps({"thumbnail_upload": "failed", "error": str(exc)}),
-                file=sys.stderr,
-            )
-    else:
-        print("No thumbnail.png — skipped custom thumbnail upload")
+    try:
+        thumb_media = MediaFileUpload(str(args.thumbnail), mimetype="image/png", resumable=True)
+        thumb_req = youtube.thumbnails().set(videoId=video_id, media_body=thumb_media)
+        thumb_resp = thumb_req.execute()
+        print(json.dumps({"thumbnail_upload": "ok", "items": len(thumb_resp.get("items", []))}))
+    except Exception as exc:  # noqa: BLE001
+        print(
+            json.dumps({"thumbnail_upload": "failed", "error": str(exc)}),
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

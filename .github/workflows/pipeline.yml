@@ -72,6 +72,7 @@ jobs:
           required=(
             output/script.txt output/scenes.json output/metadata.json
             output/narration.mp3 output/scene_durations.json output/captions.srt
+            output/youtube_seo.json output/thumbnail.json
           )
           for f in "${required[@]}"; do
             test -s "$f" || { echo "Missing or empty: $f"; exit 1; }
@@ -130,6 +131,10 @@ jobs:
             --run-id "${{ needs.script-and-audio.outputs.run_id }}" \
             --output output/images \
             --durations output/scene_durations.json
+          test -s output/images/thumbnail.png || {
+            echo "Missing output/images/thumbnail.png — VPS did not produce custom thumbnail"
+            exit 1
+          }
 
       - uses: actions/upload-artifact@v4
         id: upload-images
@@ -151,7 +156,7 @@ jobs:
         if: steps.upload-images.outcome != 'success' && steps.upload-images-retry.outcome != 'success'
         run: exit 1
 
-  render-and-upload:
+  render:
     needs: [script-and-audio, wait-for-images]
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -175,13 +180,23 @@ jobs:
           name: images
           path: output/images
 
+      - name: Promote thumbnail for upload package
+        run: |
+          if [ -f output/images/thumbnail.png ]; then
+            cp output/images/thumbnail.png output/thumbnail.png
+          fi
+          test -s output/thumbnail.png || {
+            echo "Missing output/thumbnail.png after images download"
+            exit 1
+          }
+
       - name: Install Python deps for render
         run: pip install -r requirements.txt
 
       - name: Phase 4 — ffmpeg render
         run: python src/render_video.py output
 
-      - name: Upload final video artifact (before YouTube — survives upload failures)
+      - name: Upload final video artifact (upload job reuses this — no re-render needed)
         uses: actions/upload-artifact@v4
         with:
           name: final-video
@@ -193,9 +208,29 @@ jobs:
             output/script.txt
             output/script_clean.txt
             output/metadata.json
+            output/youtube_seo.json
           if-no-files-found: error
 
-      - name: Phase 5 — YouTube upload (optional)
+  upload:
+    needs: [script-and-audio, render]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: final-video
+          path: output
+
+      - name: Install Python deps for upload
+        run: pip install -r requirements.txt
+
+      - name: Phase 5 — YouTube upload (optional; re-run this job alone after token refresh)
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -205,6 +240,9 @@ jobs:
             echo "YouTube secrets not set — video saved as artifact only."
             exit 0
           fi
+          test -s output/final_video.mp4 || { echo "Missing final_video.mp4"; exit 1; }
+          test -s output/thumbnail.png || { echo "Missing thumbnail.png — refusing upload without custom thumbnail"; exit 1; }
+          test -s output/youtube_seo.json || { echo "Missing youtube_seo.json"; exit 1; }
           python src/phase5_upload.py \
             --video output/final_video.mp4 \
             --metadata output/metadata.json \
@@ -219,8 +257,8 @@ jobs:
         run: bash scripts/alert.sh "Pipeline complete — run ${{ needs.script-and-audio.outputs.run_id }}"
 
   notify-failure:
-    needs: [script-and-audio, wait-for-images, render-and-upload]
-    if: ${{ always() && (needs.script-and-audio.result == 'failure' || needs.wait-for-images.result == 'failure' || needs.render-and-upload.result == 'failure') }}
+    needs: [script-and-audio, wait-for-images, render, upload]
+    if: ${{ always() && (needs.script-and-audio.result == 'failure' || needs.wait-for-images.result == 'failure' || needs.render.result == 'failure' || needs.upload.result == 'failure') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

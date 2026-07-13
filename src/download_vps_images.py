@@ -53,7 +53,9 @@ def main() -> None:
             raise RuntimeError(f"Downloaded image too small: {dest} ({dest.stat().st_size} bytes)")
         print(f"saved {dest} ({dest.stat().st_size // 1024}KB)")
 
-    thumb_dest = args.output.parent / "thumbnail.png"
+    # Save inside images/ so the GHA `images` artifact ships the thumbnail
+    # (parent-only path was dropped before render/upload).
+    thumb_dest = args.output / "thumbnail.png"
     try:
         httpx_download_with_retry(
             f"{base}/runs/{args.run_id}/images/thumbnail.png",
@@ -64,6 +66,11 @@ def main() -> None:
         )
         if thumb_dest.stat().st_size >= 10_000:
             print(f"saved {thumb_dest} ({thumb_dest.stat().st_size // 1024}KB)")
+            parent_thumb = args.output.parent / "thumbnail.png"
+            parent_thumb.write_bytes(thumb_dest.read_bytes())
+            print(f"copied {parent_thumb}")
+        else:
+            print(f"thumbnail.png too small: {thumb_dest.stat().st_size} bytes")
     except Exception as exc:  # noqa: BLE001
         print(f"thumbnail.png not available: {exc}")
 
