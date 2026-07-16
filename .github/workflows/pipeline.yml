@@ -4,6 +4,22 @@ on:
   schedule:
     - cron: "0 12 * * 1"
   workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: "Existing VPS run_id (skips Phase 1/2; reuses mid-pipeline from source_gha_run_id)"
+        required: false
+        type: string
+        default: ""
+      source_gha_run_id:
+        description: "GHA run id that has the mid-pipeline artifact (required when resume_run_id is set)"
+        required: false
+        type: string
+        default: ""
+      trigger_vps_resume:
+        description: "Also POST /resume on VPS before polling"
+        required: false
+        type: boolean
+        default: true
 
 env:
   VPS_URL: ${{ secrets.VPS_WEBHOOK_URL }}
@@ -18,23 +34,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: topic-history
-          path: config
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       - name: Install dependencies
+        if: ${{ inputs.resume_run_id == '' }}
         run: pip install -r requirements.txt
 
       - name: Install ffmpeg
+        if: ${{ inputs.resume_run_id == '' }}
         run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core fontconfig
 
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.resume_run_id == '' }}
+        continue-on-error: true
+        with:
+          name: topic-history
+          path: config
+
       - name: Verify NotebookLM auth
+        if: ${{ inputs.resume_run_id == '' }}
         env:
           NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
         run: |
@@ -45,20 +65,69 @@ jobs:
           notebooklm auth check --test --json
 
       - name: Phase 1 — NotebookLM
+        if: ${{ inputs.resume_run_id == '' }}
         env:
           NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
         run: python src/phase1_script.py --output output
 
+      - name: Phase 2 — edge-tts
+        if: ${{ inputs.resume_run_id == '' }}
+        run: python src/phase2_audio.py --input output --output output
+
+      - name: Resume — download mid-pipeline from prior GHA run
+        if: ${{ inputs.resume_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+        run: |
+          set -euo pipefail
+          SRC="${{ inputs.source_gha_run_id }}"
+          if [ -z "$SRC" ]; then
+            echo "source_gha_run_id is required when resume_run_id is set"
+            exit 1
+          fi
+          mkdir -p output
+          gh run download "$SRC" -n mid-pipeline -D output --repo "${{ github.repository }}"
+          python - <<'PY'
+          import json, pathlib, os
+          meta = pathlib.Path("output/metadata.json")
+          data = json.loads(meta.read_text(encoding="utf-8"))
+          want = os.environ["RESUME_RUN_ID"]
+          got = data.get("run_id")
+          if got != want:
+              raise SystemExit(f"mid-pipeline run_id mismatch: artifact={got!r} expected={want!r}")
+          print(f"Resuming run_id={got} topic={data.get('topic')}")
+          # Keep artifact thumbnail.json in sync with the catchy VPS prompt for this topic.
+          thumb_path = pathlib.Path("output/thumbnail.json")
+          old = json.loads(thumb_path.read_text(encoding="utf-8")) if thumb_path.exists() else {}
+          old["prompt"] = (
+              "Edge-to-edge 16:9 cream high-contrast stick-figure YouTube thumbnail, "
+              "giant close-up of a stubborn stick figure pushing away a huge open helping hand "
+              "with both arms while drowning under an oversized collapsing to-do stack, "
+              "tense gritted expression, bold thick black outlines, subject fills most of the frame "
+              "phone-readable, quiet cream space on the left third for title overlay, "
+              "no borders no letterboxing no text no question marks no emoji, "
+              "curiosity punch of pride refusing help"
+          )
+          old["topic"] = data.get("topic") or old.get("topic")
+          old["title"] = data.get("title") or old.get("title")
+          old["entity_refs"] = []
+          thumb_path.write_text(json.dumps(old, indent=2) + "\n", encoding="utf-8")
+          print("Updated thumbnail.json with CTR prompt")
+          PY
+
       - name: Capture run_id
         id: meta
         run: |
-          RUN_ID=$(python -c "import json; print(json.load(open('output/metadata.json'))['run_id'])")
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Phase 2 — edge-tts
-        run: python src/phase2_audio.py --input output --output output
+          if [ -n "${{ inputs.resume_run_id }}" ]; then
+            echo "run_id=${{ inputs.resume_run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            RUN_ID=$(python -c "import json; print(json.load(open('output/metadata.json'))['run_id'])")
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Trigger VPS image generation
+        if: ${{ inputs.resume_run_id == '' }}
         run: |
           python src/trigger_vps.py \
             --scenes output/scenes.json \
@@ -66,17 +135,27 @@ jobs:
             --metadata output/metadata.json \
             --run-id "${{ steps.meta.outputs.run_id }}"
 
+      - name: Resume VPS image generation
+        if: ${{ inputs.resume_run_id != '' && inputs.trigger_vps_resume }}
+        run: |
+          pip install httpx
+          python src/trigger_vps.py --run-id "${{ steps.meta.outputs.run_id }}" --resume
+
       - name: Verify pipeline outputs before upload
         run: |
           ls -la output/
           required=(
             output/script.txt output/scenes.json output/metadata.json
-            output/narration.mp3 output/scene_durations.json output/captions.srt
+            output/narration.mp3 output/scene_durations.json
             output/youtube_seo.json output/thumbnail.json
           )
           for f in "${required[@]}"; do
             test -s "$f" || { echo "Missing or empty: $f"; exit 1; }
           done
+          # captions.srt may be empty in some older artifacts; regenerate later in render if needed
+          if [ ! -s output/captions.srt ]; then
+            echo "WARN: captions.srt missing/empty — upload may skip captions"
+          fi
 
       - uses: actions/upload-artifact@v4
         id: upload-mid-pipeline
@@ -99,6 +178,7 @@ jobs:
         run: exit 1
 
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.resume_run_id == '' }}
         with:
           name: topic-history
           path: config/topic_history.json
@@ -135,6 +215,8 @@ jobs:
             echo "Missing output/images/thumbnail.png — VPS did not produce custom thumbnail"
             exit 1
           }
+          cp output/images/thumbnail.png output/thumbnail.png
+          ls -la output/images/thumbnail.png output/thumbnail.png
 
       - uses: actions/upload-artifact@v4
         id: upload-images
@@ -189,6 +271,7 @@ jobs:
             echo "Missing output/thumbnail.png after images download"
             exit 1
           }
+          echo "Custom thumbnail ready ($(wc -c < output/thumbnail.png) bytes)"
 
       - name: Install Python deps for render
         run: pip install -r requirements.txt
