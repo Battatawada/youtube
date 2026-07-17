@@ -1,0 +1,72 @@
+name: Set YouTube Thumbnail
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "YouTube video id (e.g. -0uwkG0R6qM)"
+        required: true
+        type: string
+      vps_run_id:
+        description: "VPS run_id that has images/thumbnail.png"
+        required: true
+        type: string
+
+env:
+  VPS_URL: ${{ secrets.VPS_WEBHOOK_URL }}
+  VPS_SECRET: ${{ secrets.VPS_WEBHOOK_SECRET }}
+
+jobs:
+  set-thumbnail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install deps
+        run: pip install -r requirements.txt httpx
+
+      - name: Download thumbnail from VPS
+        run: |
+          mkdir -p output
+          python - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "src")
+          from common import httpx_download_with_retry
+          base = os.environ["VPS_URL"].rstrip("/")
+          secret = os.environ["VPS_SECRET"]
+          run_id = os.environ["VPS_RUN_ID"]
+          dest = Path("output/thumbnail.png")
+          httpx_download_with_retry(
+              f"{base}/runs/{run_id}/images/thumbnail.png",
+              dest,
+              headers={"Authorization": f"Bearer {secret}"},
+              timeout=180.0,
+              retries=5,
+          )
+          size = dest.stat().st_size
+          print(f"downloaded {dest} ({size} bytes)")
+          if size < 10_000:
+              raise SystemExit("thumbnail too small")
+          PY
+        env:
+          VPS_RUN_ID: ${{ inputs.vps_run_id }}
+
+      - name: Upload custom thumbnail to YouTube
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          test -n "$YOUTUBE_CLIENT_ID" && test -n "$YOUTUBE_REFRESH_TOKEN" || {
+            echo "Missing YouTube secrets"
+            exit 1
+          }
+          python src/set_youtube_thumbnail.py \
+            --video-id "${{ inputs.video_id }}" \
+            --thumbnail output/thumbnail.png

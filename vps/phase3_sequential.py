@@ -341,7 +341,15 @@ class SequentialGenerator:
         entity_refs = thumb_meta.get("entity_refs") or []
         media_inputs = [ref_media[r] for r in entity_refs if r in ref_media]
         prompt = _sanitize_prompt(prompt, 0)
-        prompt += ", YouTube thumbnail composition, bold focal subject, high contrast, no visible text"
+        # Harden CTR thumb style so Flow does not drift into photoreal / wrong niche.
+        prompt += (
+            ", Mind In Minutes stick-figure psychology YouTube thumbnail, "
+            "warm cream beige background only, bold thick black line art, "
+            "edge-to-edge 16:9 fill entire frame, no borders no letterboxing, "
+            "large phone-readable subject, high contrast, "
+            "ZERO photorealism ZERO photography ZERO rain ZERO houses ZERO cinematic still, "
+            "no visible text no emoji no question marks"
+        )
 
         for attempt in range(1, self.max_retries + 1):
             try:
