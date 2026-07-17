@@ -1,6 +1,6 @@
 Study the YouTube reference sources in this notebook (their titles, hooks, pacing, and "Entire X in Y mins" format).
 
-Past videos we ALREADY published (do NOT repeat or closely rephrase):
+Past videos we ALREADY published — HARD BAN (do NOT repeat, rephrase, or pick a near-duplicate theme):
 {past_topics}
 
 Generate 10 NEW video topics for a US motivation/psychology stick-figure channel in the same niche.
@@ -8,6 +8,7 @@ Generate 10 NEW video topics for a US motivation/psychology stick-figure channel
 Rules:
 - Format like reference channels: "Entire [concept] in [15] mins" or "The Psychology of [X] Explained"
 - Each topic must feel human-clickable — curiosity, identity, or relatable struggle (not academic textbook titles)
-- Vary the angle from past videos: different mechanism, audience pain, or metaphor
+- STRICT novelty: different psychological MECHANISM and audience pain than every DONE topic
+- Ban near-duplicates. Example that must NEVER happen: "Hate Asking for Help" after "Never Ask for Help" (same theme)
 - US English, broad appeal, no clickbait spam ("You won't believe", all-caps shock)
 - One topic per line, numbered 1–10 only

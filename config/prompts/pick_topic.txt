@@ -1,8 +1,11 @@
 From the 10 topics you just listed, pick the single best NEXT video for this channel.
 
-Past videos already made (avoid same angle):
+Past videos already made — HARD BAN (never pick same theme / paraphrase):
 {past_topics}
 
 Pick for: human curiosity, search + browse CTR, and fit with reference channel style (Entire X in Y mins psychology/motivation).
+
+STRICT: the pick must be a completely different psychological mechanism than every DONE topic.
+Reject near-duplicates like "Hate Asking for Help" ≈ "Never Ask for Help".
 
 Reply with ONLY the topic title on one line — no numbering, no explanation, no quotes.

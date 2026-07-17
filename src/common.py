@@ -447,6 +447,190 @@ def align_scenes_to_narration(
     return prompts, segments
 
 
+# Theme aliases catch paraphrases ("hate asking for help" ≈ "never ask for help").
+THEME_ALIAS_GROUPS: list[frozenset[str]] = [
+    frozenset(
+        {
+            "ask for help",
+            "asking for help",
+            "asking help",
+            "never ask",
+            "hate asking",
+            "refuse help",
+            "refusing help",
+            "wont ask",
+            "won't ask",
+            "cant ask",
+            "can't ask",
+        }
+    ),
+    frozenset(
+        {
+            "hyperindependence",
+            "hyper independence",
+            "do everything alone",
+            "prefer alone",
+            "prefer to do everything alone",
+            "do it alone",
+        }
+    ),
+    frozenset({"overthink", "overthinker", "overthinking", "chronic overthinker", "rumination"}),
+    frozenset({"being watched", "hate being watched", "hypervigilance", "watched", "scrutiny"}),
+    frozenset({"people pleasing", "people pleaser", "approval seeking", "fear of saying no"}),
+    frozenset({"imposter", "impostor", "imposter syndrome", "impostor syndrome"}),
+    frozenset({"procrastinat", "procrastination", "avoidance", "putting things off"}),
+    frozenset({"attachment", "avoidant attachment", "anxious attachment", "secure attachment"}),
+    frozenset({"burnout", "burned out", "burnt out", "exhaustion"}),
+    frozenset({"perfectionis", "perfectionism", "never good enough"}),
+    frozenset({"loneliness", "lonely", "isolation", "social isolation"}),
+]
+
+_TOPIC_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "with", "from",
+        "why", "how", "who", "what", "when", "where", "was", "were", "is", "are",
+        "you", "your", "yours", "we", "our", "they", "their", "this", "that",
+        "psychology", "psychological", "explained", "entire", "mins", "minutes",
+        "science", "people", "person", "human", "humans", "mind", "mental",
+        "about", "into", "over", "under", "after", "before", "between", "through",
+        "full", "complete", "video", "story", "guide", "deep", "dive",
+    }
+)
+
+# Light stems so ask/asking and help/helping collide.
+_STEM_RULES: tuple[tuple[str, str], ...] = (
+    ("asking", "ask"),
+    ("asked", "ask"),
+    ("helping", "help"),
+    ("helped", "help"),
+    ("hating", "hate"),
+    ("hated", "hate"),
+    ("watching", "watch"),
+    ("watched", "watch"),
+    ("preferring", "prefer"),
+    ("preferred", "prefer"),
+    ("thinking", "think"),
+    ("overthinking", "overthink"),
+    ("overthinker", "overthink"),
+    ("loneliness", "lonely"),
+)
+
+
+def normalize_topic_text(text: str) -> str:
+    t = (text or "").lower()
+    t = t.replace("'", "'").replace("'", "'")
+    t = t.replace("won't", "wont").replace("can't", "cant").replace("don't", "dont")
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _stem_token(token: str) -> str:
+    for src, dst in _STEM_RULES:
+        if token == src or token.startswith(src):
+            return dst
+    if token.endswith("ing") and len(token) > 5:
+        return token[:-3]
+    if token.endswith("ers") and len(token) > 5:
+        return token[:-3]
+    if token.endswith("er") and len(token) > 4:
+        return token[:-2]
+    if token.endswith("ies") and len(token) > 5:
+        return token[:-3] + "y"
+    if token.endswith("s") and len(token) > 4 and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def extract_topic_keys(text: str) -> set[str]:
+    """Keys for hard dedupe: theme aliases, stemmed tokens, bigrams."""
+    norm = normalize_topic_text(text)
+    if not norm:
+        return set()
+    keys: set[str] = set()
+    for group in THEME_ALIAS_GROUPS:
+        lowered = {a.lower() for a in group}
+        if any(alias in norm for alias in lowered):
+            keys.add("theme:" + "|".join(sorted(lowered)[:6]))
+            keys.update(lowered)
+    words = [
+        _stem_token(w)
+        for w in norm.split()
+        if w not in _TOPIC_STOPWORDS and len(w) >= 3
+    ]
+    words = [w for w in words if w not in _TOPIC_STOPWORDS and len(w) >= 3]
+    for w in words:
+        if len(w) >= 4:
+            keys.add(w)
+    for i in range(len(words) - 1):
+        bigram = f"{words[i]} {words[i + 1]}"
+        if len(bigram) >= 7:
+            keys.add(bigram)
+    return keys
+
+
+def topic_keys_for_history_row(row: dict[str, Any]) -> set[str]:
+    stored = row.get("topic_keys")
+    if isinstance(stored, list) and stored:
+        return {str(x).lower() for x in stored}
+    blob = " ".join(str(row.get(k, "")) for k in ("topic", "title") if row.get(k))
+    return extract_topic_keys(blob)
+
+
+def topic_similarity_ratio(a: str, b: str) -> float:
+    from difflib import SequenceMatcher
+
+    na = normalize_topic_text(a)
+    nb = normalize_topic_text(b)
+    if not na or not nb:
+        return 0.0
+    return SequenceMatcher(None, na, nb).ratio()
+
+
+def topic_overlaps_history(topic: str, history: list[dict[str, Any]] | None = None) -> str | None:
+    """
+    Return a reason if topic is the same theme / near-paraphrase of a past video.
+    Strict: theme-group hit, strong key overlap, or high title similarity.
+    """
+    history = history if history is not None else load_topic_history()
+    cand = extract_topic_keys(topic)
+    for row in history:
+        past_label = row.get("title") or row.get("topic") or "prior video"
+        past_blob = f"{row.get('title', '')} {row.get('topic', '')}".strip()
+        ratio = topic_similarity_ratio(topic, past_blob)
+        if ratio >= 0.72:
+            return f"too similar to prior video ({past_label}) similarity={ratio:.2f}"
+
+        past_keys = topic_keys_for_history_row(row)
+        overlap = {
+            k
+            for k in (cand & past_keys)
+            if k not in _TOPIC_STOPWORDS and (k.startswith("theme:") or len(k) >= 5)
+        }
+        if not overlap:
+            continue
+        strong = any(k.startswith("theme:") or " " in k for k in overlap) or len(overlap) >= 2
+        if strong:
+            sample = ", ".join(sorted(overlap)[:4])
+            return f"overlaps prior theme ({past_label}) via [{sample}]"
+    return None
+
+
+def filter_topics_against_history(
+    topics: list[str],
+    history: list[dict[str, Any]] | None = None,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    history = history if history is not None else load_topic_history()
+    kept: list[str] = []
+    rejected: list[tuple[str, str]] = []
+    for t in topics:
+        reason = topic_overlaps_history(t, history)
+        if reason:
+            rejected.append((t, reason))
+        else:
+            kept.append(t)
+    return kept, rejected
+
+
 def load_topic_history(path: Path | None = None) -> list[dict[str, Any]]:
     path = path or CONFIG / "topic_history.json"
     if not path.exists():
@@ -459,14 +643,31 @@ def load_topic_history(path: Path | None = None) -> list[dict[str, Any]]:
     return []
 
 
-def format_topic_history_for_prompt(topics: list[dict[str, Any]], limit: int = 12) -> str:
+def format_topic_history_for_prompt(topics: list[dict[str, Any]], limit: int = 80) -> str:
     if not topics:
         return "(none yet — this is the first video)"
-    lines: list[str] = []
+    lines: list[str] = [
+        "HARD BAN — these topics/themes are CLOSED. Do NOT repeat, rephrase, or pick a near-duplicate:",
+        "Near-duplicate examples that MUST be rejected: 'Hate Asking for Help' ≈ 'Never Ask for Help'.",
+    ]
     for row in topics[-limit:]:
         title = row.get("title") or row.get("topic") or "Unknown"
+        topic = row.get("topic") or ""
         run_id = row.get("run_id", "")
-        lines.append(f"- {title}" + (f" [{run_id}]" if run_id else ""))
+        keys = sorted(
+            k for k in topic_keys_for_history_row(row) if not k.startswith("theme:")
+        )[:8]
+        line = f"- DONE: {title}"
+        if topic and topic != title:
+            line += f" (key: {topic})"
+        if run_id:
+            line += f" [{run_id}]"
+        if keys:
+            line += f" | ban tokens: {', '.join(keys)}"
+        lines.append(line)
+    lines.append(
+        "Pick a completely different psychological mechanism / audience pain — not a title rewrite."
+    )
     return "\n".join(lines)
 
 
@@ -476,19 +677,25 @@ def append_topic_history(
     run_id: str,
     topic: str,
     title: str,
-    max_entries: int = 30,
+    max_entries: int = 80,
 ) -> None:
     existing = load_topic_history(path)
-    existing.append(
-        {
-            "run_id": run_id,
-            "topic": topic,
-            "title": title,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
+    keys = sorted(extract_topic_keys(f"{topic} {title}"))
+    row = {
+        "run_id": run_id,
+        "topic": topic,
+        "title": title,
+        "topic_keys": keys,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Drop prior rows that are the same theme so history stays clean.
+    existing = [
+        r
+        for r in existing
+        if not topic_overlaps_history(topic, [r]) and not topic_overlaps_history(title, [r])
+    ]
+    existing.append(row)
     save_json(path, {"topics": existing[-max_entries:]})
-
 
 def prompts_to_scenes(prompts: list[str], entity_refs: list[str] | None = None) -> list[dict]:
     refs = entity_refs or ["character_A"]

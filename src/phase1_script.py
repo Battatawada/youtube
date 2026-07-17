@@ -32,6 +32,7 @@ from common import (
     extract_notebook_id,
     extract_source_id,
     fallback_seo,
+    filter_topics_against_history,
     format_topic_history_for_prompt,
     is_valid_image_prompt,
     is_transient_notebooklm_error,
@@ -50,6 +51,7 @@ from common import (
     split_script_for_scenes,
     strip_markdown,
     strip_total_parts_header,
+    topic_overlaps_history,
 )
 
 
@@ -181,16 +183,38 @@ def ask(
 _BAD_TOPIC = re.compile(r"continuing conversation|^[a-f0-9]{8,}$", re.IGNORECASE)
 
 
-def _first_topic_from_list(topics_raw: str) -> str:
+def parse_numbered_topics(topics_raw: str) -> list[str]:
+    out: list[str] = []
     for line in topics_raw.splitlines():
-        cleaned = re.sub(r"^\d+[\).\s]+", "", line.strip()).strip('"')
+        cleaned = re.sub(r"^\d+[\).\s]+", "", line.strip()).strip('"').strip("'")
         if cleaned and len(cleaned) > 15 and not _BAD_TOPIC.search(cleaned):
-            return cleaned
+            out.append(cleaned)
+    return out
+
+
+def _first_topic_from_list(topics_raw: str) -> str:
+    for cleaned in parse_numbered_topics(topics_raw):
+        return cleaned
     raise RuntimeError("Could not parse any topic from topics_list")
 
 
+def _first_fresh_topic(topics_raw: str, history: list | None = None) -> str:
+    history = history if history is not None else load_topic_history()
+    for cleaned in parse_numbered_topics(topics_raw):
+        reason = topic_overlaps_history(cleaned, history)
+        if reason:
+            print(f"  Skip listed topic (history): {cleaned[:80]} — {reason}", flush=True)
+            continue
+        return cleaned
+    raise RuntimeError(
+        "All candidate topics overlap past videos. Refusing to ship a near-duplicate. "
+        "Update topic_history / regenerate topics."
+    )
+
+
 def pick_topic(notebook_id: str, topics_raw: str, past_topics: str) -> str:
-    """Pick topic in the same NotebookLM chat as topics list (no --new)."""
+    """Pick topic in the same NotebookLM chat as topics list (no --new). Hard history check."""
+    history = load_topic_history()
     prompt = (
         f"{load_prompt('pick_topic.txt').replace('{past_topics}', past_topics)}\n\nTopics:\n{topics_raw}"
     )
@@ -200,12 +224,18 @@ def pick_topic(notebook_id: str, topics_raw: str, past_topics: str) -> str:
         line = re.sub(r"^\d+[\).\s]+", "", line)
         line = line.strip('"').strip("'")
         if _BAD_TOPIC.search(line) or len(line) < 15:
-            print("  Warning: bad topic pick, using first listed topic", flush=True)
-            return _first_topic_from_list(topics_raw)
+            print("  Warning: bad topic pick, using first fresh listed topic", flush=True)
+            return _first_fresh_topic(topics_raw, history)
+        reason = topic_overlaps_history(line, history)
+        if reason:
+            print(f"  Warning: model re-picked a closed theme — {reason}", flush=True)
+            return _first_fresh_topic(topics_raw, history)
         return line
+    except RuntimeError:
+        raise
     except Exception as exc:
-        print(f"  Warning: topic pick failed ({exc}), using first listed topic", flush=True)
-        return _first_topic_from_list(topics_raw)
+        print(f"  Warning: topic pick failed ({exc}), using first fresh listed topic", flush=True)
+        return _first_fresh_topic(topics_raw, history)
 
 
 def collect_multipart_text(
@@ -464,8 +494,29 @@ def main() -> None:
         topics_raw = ask(notebook_id, topics_prompt, new=True)
         (out / "topics_list.txt").write_text(topics_raw, encoding="utf-8")
 
+        # Hard filter before pick — prompts alone are not enough (near-duplicate titles shipped).
+        parsed = parse_numbered_topics(topics_raw)
+        kept, rejected = filter_topics_against_history(parsed, history)
+        for t, reason in rejected:
+            print(f"  Topic blocked: {t[:90]} — {reason}", flush=True)
+        if not kept:
+            raise RuntimeError(
+                "No fresh topics left after history filter. "
+                "All candidates overlapped past videos — refusing duplicate."
+            )
+        topics_raw = "\n".join(f"{i}. {t}" for i, t in enumerate(kept[:10], 1))
+        (out / "topics_list.txt").write_text(topics_raw, encoding="utf-8")
+
         print("[Step 2] Pick topic...", flush=True)
         topic = pick_topic(notebook_id, topics_raw, past_topics)
+        overlap = topic_overlaps_history(topic, history)
+        if overlap:
+            print(f"  Warning: final pick blocked — {overlap}", flush=True)
+            topic = _first_fresh_topic(topics_raw, history)
+        # Final hard gate — never continue with a near-duplicate.
+        final_hit = topic_overlaps_history(topic, history)
+        if final_hit:
+            raise RuntimeError(f"Refusing near-duplicate topic: {topic} — {final_hit}")
         print(f"  -> {topic}", flush=True)
 
         print("[Step 3] Script (multi-part)...", flush=True)

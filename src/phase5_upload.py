@@ -90,26 +90,32 @@ def build_upload_status(upload_rules: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def probe_video_duration_sec(path: Path) -> float:
+def probe_video_duration_sec(path: Path) -> float | None:
+    """Best-effort — never block video/thumbnail upload if ffprobe is missing."""
     import subprocess
 
-    result = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        print(json.dumps({"video_duration": "skipped", "reason": "ffprobe not installed"}))
+        return None
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or "ffprobe failed")
+        print(json.dumps({"video_duration": "skipped", "reason": (result.stderr or "ffprobe failed")[:200]}))
+        return None
     return float(result.stdout.strip())
 
 
@@ -151,7 +157,15 @@ def main() -> None:
         )
 
     duration_sec = probe_video_duration_sec(args.video)
-    print(json.dumps({"video_duration_sec": round(duration_sec, 1), "video_duration_min": round(duration_sec / 60, 1)}))
+    if duration_sec is not None:
+        print(
+            json.dumps(
+                {
+                    "video_duration_sec": round(duration_sec, 1),
+                    "video_duration_min": round(duration_sec / 60, 1),
+                }
+            )
+        )
 
     youtube = build_youtube()
     body = {
