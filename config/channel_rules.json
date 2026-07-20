@@ -1,5 +1,5 @@
 {
-  "channel_name": "Mind in Minutes",
+  "channel_name": "Doodlytical",
   "shorts": {
     "max_per_day": 3,
     "optimal_times": ["07:00", "12:00", "17:00"]
@@ -14,10 +14,10 @@
   },
   "seo": {
     "niche": "mind psychology explained",
-    "default_tags": ["mind in minutes", "psychology", "human behavior", "motivation", "self improvement"],
+    "default_tags": ["doodlytical", "psychology", "human behavior", "motivation", "self improvement"],
     "title_max_chars": 65,
     "region": "US",
-    "description_footer": "About Mind in Minutes\nWhy we think, feel, and act the way we do — in about 15 minutes. Psychology and human behavior explainers with stick-figure storytelling.\n\nSubscribe for new videos every week.\nhttps://www.youtube.com/@mindinminutes01\n\n#psychology #humanbehavior #mindinminutes"
+    "description_footer": "About Doodlytical\nWhy we think, feel, and act the way we do — in about 15 minutes. Psychology and human behavior explainers with stick-figure storytelling.\n\nSubscribe for new videos every week.\nhttps://www.youtube.com/@doodlytical\n\n#psychology #humanbehavior #doodlytical"
   },
   "upload": {
     "privacy": "public",

@@ -1,4 +1,4 @@
-Create ONE YouTube thumbnail IMAGE PROMPT for this Mind In Minutes psychology video.
+Create ONE YouTube thumbnail IMAGE PROMPT for this Doodlytical psychology video.
 
 Topic: {topic}
 Video title (mood only — NEVER paint these words into the image): {title}

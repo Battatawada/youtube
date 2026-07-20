@@ -20,7 +20,7 @@
   "end_card": {
     "enabled": true,
     "image": "config/end_card/subscribe.png",
-    "script": "If you enjoyed this video, subscribe to Mind in Minutes for more psychology stories like this. Thank you for watching.",
+    "script": "If you enjoyed this video, subscribe to Doodlytical for more psychology stories like this. Thank you for watching.",
     "voice": "en-IE-EmilyNeural"
   }
 }

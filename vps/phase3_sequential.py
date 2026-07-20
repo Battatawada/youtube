@@ -343,7 +343,7 @@ class SequentialGenerator:
         prompt = _sanitize_prompt(prompt, 0)
         # Harden CTR thumb style so Flow does not drift into photoreal / wrong niche.
         prompt += (
-            ", Mind In Minutes stick-figure psychology YouTube thumbnail, "
+            ", Doodlytical stick-figure psychology YouTube thumbnail, "
             "warm cream beige background only, bold thick black line art, "
             "edge-to-edge 16:9 fill entire frame, no borders no letterboxing, "
             "large phone-readable subject, high contrast, "

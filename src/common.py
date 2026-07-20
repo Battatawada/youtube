@@ -788,7 +788,7 @@ def sanitize_seo_title(title: str, max_chars: int = 65) -> str:
 def fallback_seo(topic: str) -> dict:
     """Rich SEO metadata when NotebookLM returns non-JSON."""
     niche = load_json(CONFIG / "niche.json") if (CONFIG / "niche.json").exists() else {}
-    channel = niche.get("name", "Mind in Minutes")
+    channel = niche.get("name", "Doodlytical")
     tagline = niche.get("tagline", "Psychology explainers in about 15 minutes.")
     title = sanitize_seo_title(topic)
     description = (
@@ -805,6 +805,6 @@ def fallback_seo(topic: str) -> dict:
     return {
         "title": title,
         "description": description,
-        "tags": ["mind in minutes", "psychology", "human behavior", "motivation", "self improvement"],
-        "hashtags": ["#psychology", "#mindinminutes"],
+        "tags": ["doodlytical", "psychology", "human behavior", "motivation", "self improvement"],
+        "hashtags": ["#psychology", "#doodlytical"],
     }

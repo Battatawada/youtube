@@ -1,4 +1,4 @@
-Create YouTube SEO for **Mind in Minutes** — a US psychology stick-figure channel (~15 min explainers).
+Create YouTube SEO for **Doodlytical** — a US psychology stick-figure channel (~15 min explainers).
 
 Topic: {topic}
 
@@ -20,4 +20,4 @@ Title rules:
 - Prefer: "The Psychology of…", "Why You…", "Entire … in 15 mins", specific behavior or emotion
 - No ALL CAPS, no emoji spam, no "You won't believe"
 
-Description: speak to the viewer's situation; mention Mind in Minutes once naturally; include subscribe CTA.
+Description: speak to the viewer's situation; mention Doodlytical once naturally; include subscribe CTA.
