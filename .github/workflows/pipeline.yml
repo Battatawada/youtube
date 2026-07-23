@@ -70,8 +70,11 @@ jobs:
           NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
         run: python src/phase1_script.py --output output
 
-      - name: Phase 2 — edge-tts
+      - name: Phase 2 — Azure TTS (edge fallback)
         if: ${{ inputs.resume_run_id == '' }}
+        env:
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+          AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
         run: python src/phase2_audio.py --input output --output output
 
       - name: Resume — download mid-pipeline from prior GHA run
@@ -200,7 +203,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      - run: pip install httpx
+      - run: pip install httpx Pillow
 
       - name: Poll VPS until images ready
         run: python src/poll_vps.py --run-id "${{ needs.script-and-audio.outputs.run_id }}" --timeout 7200
@@ -215,7 +218,18 @@ jobs:
             echo "Missing output/images/thumbnail.png — VPS did not produce custom thumbnail"
             exit 1
           }
-          cp output/images/thumbnail.png output/thumbnail.png
+
+      - name: Compose thumbnail text overlay
+        run: |
+          THUMB_TEXT=$(python -c "import json; d=json.load(open('output/thumbnail.json')); print(d.get('thumbnail_text',''))")
+          if [ -n "$THUMB_TEXT" ]; then
+            python src/thumbnail_compose.py --base output/images/thumbnail.png --text "$THUMB_TEXT"
+            cp output/images/thumbnail.png output/thumbnail.png
+            echo "Composed thumbnail overlay: $THUMB_TEXT"
+          else
+            echo "WARN: no thumbnail_text in thumbnail.json — using base image only"
+            cp output/images/thumbnail.png output/thumbnail.png
+          fi
           ls -la output/images/thumbnail.png output/thumbnail.png
 
       - uses: actions/upload-artifact@v4

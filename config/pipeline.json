@@ -14,8 +14,21 @@
   "source_request_timeout": 120,
   "source_wait_timeout": 300,
   "source_add_delay_sec": 5,
+  "tts_provider": "azure",
+  "tts_modulation": true,
+  "tts_merge_chunks": true,
+  "tts_azure_style_degree": 0.9,
+  "tts_rate": "-7%",
   "tts_voices": ["en-IE-EmilyNeural", "en-US-AndrewMultilingualNeural"],
-  "tts_rate": "-5%",
+  "tts_voice_pool": {
+    "narrator": "en-IE-EmilyNeural",
+    "narrator_alt": "en-US-AndrewMultilingualNeural",
+    "quote_male": "en-US-ChristopherNeural",
+    "quote_female": "en-US-AriaNeural",
+    "authority": "en-US-GuyNeural",
+    "witness": "en-US-JennyNeural"
+  },
+  "azure_monthly_char_budget": 500000,
   "max_zoom": 1.0,
   "end_card": {
     "enabled": true,

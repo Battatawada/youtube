@@ -1,29 +1,24 @@
-Create ONE YouTube thumbnail IMAGE PROMPT for this Doodlytical psychology video.
+Refine the thumbnail BACKGROUND image prompt for this Doodlytical psychology video.
 
 Topic: {topic}
-Video title (mood only — NEVER paint these words into the image): {title}
+Locked title (mood only — NEVER paint these words into the image): {title}
+Thumbnail overlay text (for mood only — NEVER in image): {thumbnail_text}
 
-Goal: scroll-stopping CTR thumbnail that looks like a premium stick-figure psychology still, not generic AI collage.
+Base scene prompt from hook package:
+{thumbnail_scene}
 
-HARD composition (must obey):
-- Exact framing: edge-to-edge 16:9 YouTube thumbnail — fill the ENTIRE frame
-- NO white borders, NO letterboxing, NO empty top/bottom bars, NO polaroid/frame/mat
-- ONE dominant focal subject (close or medium-close). Subject must be large and readable at phone size
-- Cream/beige background with high contrast, clean minimalist bold-outline stick-figure line art
-- Leave a quieter zone on the LEFT or RIGHT third for later title overlay — still fill that zone with the cream background (never blank white bars or empty canvas)
-- ZERO readable text in the image (no captions, no watermarks, no logos, no ALL-CAPS labels)
-- NO giant question marks, NO emoji, NO sticker badges, NO busy multi-panel collage
-- Emotionally punchy human curiosity — single clear visual metaphor (brain, phone, bed, gym, mirror, etc.)
+## Layer 1 — AI image (no text)
+Output ONE standalone image prompt line (55-85 words):
 
-Strong patterns to prefer (pick ONE):
-1) Extreme close-up stick-figure face/eyes reacting hard to one metaphor object
-2) One bold stick-figure pose filling the frame with one oversized metaphor prop
-3) Split attention: stick figure mid-frame + one huge metaphor object dominating the other half
+HARD rules:
+- Edge-to-edge 16:9 — fill ENTIRE frame, no borders or letterboxing
+- Cream/beige background, bold thick black stick-figure line art
+- ONE dominant focal subject (40%+ of frame), phone-readable at small size
+- Subject **right-weighted**; quieter/simpler **left 40%** for post text overlay
+- ZERO readable text, logos, watermarks, emoji, giant question marks
+- NO collage, NO photorealism, NO cinematic rain/houses
+- Single clear visual metaphor matching the title paradox
 
-Weak patterns to AVOID:
-- Tiny figure floating in empty white/cream canvas
-- Centered glowing "?" over dull collage
-- Crowded tiny props with no clear hero
-- Soft low-contrast washed-out line art
+Prefer: extreme close-up stick-figure reaction, OR one bold pose + oversized metaphor prop.
 
-Output ONLY the image prompt as one standalone line (55–85 words). No numbering, no quotes, no explanation.
+Output ONLY the image prompt as one line. No numbering, no quotes, no explanation.

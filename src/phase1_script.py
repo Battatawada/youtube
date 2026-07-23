@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (
     CONFIG,
+    ROOT,
     align_scenes_to_narration,
     append_topic_history,
     cap_scenes,
@@ -43,6 +44,7 @@ from common import (
     notebooklm_json,
     notebooklm_json_with_retry,
     parse_image_prompt_lines,
+    parse_hook_json,
     parse_seo_json,
     parse_total_parts,
     prompts_to_scenes,
@@ -210,6 +212,46 @@ def _first_fresh_topic(topics_raw: str, history: list | None = None) -> str:
         "All candidate topics overlap past videos. Refusing to ship a near-duplicate. "
         "Update topic_history / regenerate topics."
     )
+
+
+def fallback_hook(topic: str) -> dict:
+    """Minimal hook package when NotebookLM JSON parse fails."""
+    title = topic[:65].strip()
+    cold = (
+        f"You have felt this before — {topic.lower()} — and told yourself it was nothing. "
+        "But your brain was already running a script you never agreed to. "
+        "Researchers have a name for this pattern, and it explains more than you think. "
+        "By the end of this video, you will see why the obvious fix keeps failing — "
+        "and what actually changes the loop."
+    )
+    words = [w.upper() for w in re.findall(r"[A-Za-z']+", title)[:3]]
+    thumb_text = " ".join(words) if words else "YOUR BRAIN"
+    return {
+        "title": title,
+        "cold_open": cold,
+        "thumbnail_text": thumb_text,
+        "thumbnail_scene": (
+            "Edge-to-edge 16:9 cream background stick-figure thumbnail, "
+            "one large stick figure clutching their head while a glowing brain floats "
+            "beside them, bold thick black outlines, high contrast, subject right-weighted, "
+            "quiet cream left third, no text no emoji"
+        ),
+    }
+
+
+def parse_hook_with_retry(notebook_id: str, prompt: str, topic: str) -> dict:
+    raw = ask(notebook_id, prompt, new=True)
+    try:
+        return parse_hook_json(raw)
+    except ValueError:
+        print("  Hook JSON parse failed, retrying with stricter prompt...", flush=True)
+        retry = f"{prompt}\n\nReply with ONLY raw JSON. No markdown, no explanation."
+        raw = ask(notebook_id, retry, new=True)
+        try:
+            return parse_hook_json(raw)
+        except ValueError:
+            print("  Using fallback hook package", flush=True)
+            return fallback_hook(topic)
 
 
 def pick_topic(notebook_id: str, topics_raw: str, past_topics: str) -> str:
@@ -450,8 +492,23 @@ def main() -> None:
             "Minimal cinematic chibi, figure approaching basement door, flickering bulb, tense posture.",
         ]
         topic = "Entire psychology of fear in 15 mins"
+        hook = {
+            "title": "Why Fear Hijacks Your Brain",
+            "cold_open": (
+                "Your heart is already racing before you know why. "
+                "That is not weakness — it is your threat system firing first. "
+                "Neuroscience calls this the amygdala hijack, BUT your body treats it as proof you are broken. "
+                "THEREFORE you avoid the thing that could actually help. "
+                "What nobody tells you is the loop has a back door — and we are walking through it now."
+            ),
+            "thumbnail_text": "FEAR HIJACKS",
+            "thumbnail_scene": (
+                "Cream background stick-figure close-up, wide-eyed figure with oversized brain glowing red, "
+                "bold black outlines, right-weighted, quiet left third"
+            ),
+        }
         story_parts = 1
-        seo = {"title": "The Psychology of Fear Explained", "description": "...", "tags": ["psychology"], "hashtags": []}
+        seo = {"title": hook["title"], "description": "...", "tags": ["psychology"], "hashtags": []}
         script = clean_script_for_tts(script)
         prompt_lines, segments = align_scenes_to_narration(script, prompt_lines, pipeline)
     else:
@@ -466,6 +523,29 @@ def main() -> None:
         source_ids: list[str] = []
         source_request_timeout = int(pipeline.get("source_request_timeout", 120))
         source_add_delay = float(pipeline.get("source_add_delay_sec", 5))
+
+        playbook_sources = [
+            CONFIG / "CHANNEL-PLAYBOOK.md",
+            ROOT / "CHANNEL-GROWTH-STRATEGY-PROMPT.md",
+        ]
+        for playbook_path in playbook_sources:
+            if not playbook_path.exists():
+                continue
+            print(f"  Adding playbook source: {playbook_path.name}...", flush=True)
+            added = notebooklm_json_with_retry(
+                "source",
+                "add",
+                str(playbook_path),
+                "--notebook",
+                notebook_id,
+                "--title",
+                playbook_path.stem,
+                "--request-timeout",
+                str(source_request_timeout),
+            )
+            source_ids.append(extract_source_id(added))
+            time.sleep(source_add_delay)
+
         for i, url in enumerate(urls):
             if i:
                 time.sleep(source_add_delay)
@@ -519,13 +599,38 @@ def main() -> None:
             raise RuntimeError(f"Refusing near-duplicate topic: {topic} — {final_hit}")
         print(f"  -> {topic}", flush=True)
 
-        print("[Step 3] Script (multi-part)...", flush=True)
+        print("[Step 3] Hook package (title + cold open + thumbnail)...", flush=True)
+        hook_prompt = (
+            load_prompt("story_hook_package.txt")
+            .replace("{topic}", topic)
+            .replace("{duration_minutes}", str(duration))
+            .replace("{past_topics}", past_topics)
+        )
+        hook = parse_hook_with_retry(notebook_id, hook_prompt, topic)
+        locked_title = str(hook.get("title", topic)).strip()
+        cold_open = clean_script_for_tts(str(hook.get("cold_open", "")).strip())
+        thumbnail_text = str(hook.get("thumbnail_text", "")).strip()
+        thumbnail_scene = str(hook.get("thumbnail_scene", "")).strip()
+        if not cold_open:
+            raise RuntimeError("Hook package missing cold_open")
+        save_json(out / "hook_package.json", hook)
+        print(f"  -> title: {locked_title}", flush=True)
+        print(f"  -> cold open: {len(cold_open.split())} words", flush=True)
+
+        print("[Step 4] Script (multi-part, hook-first)...", flush=True)
         story_prompt = (
             load_prompt("story_generation.txt")
             .replace("{topic}", topic)
             .replace("{duration_minutes}", str(duration))
+            .replace("{target_word_count}", str(target_words))
+            .replace("{cold_open}", cold_open)
         )
         script, story_parts = collect_multipart_text(notebook_id, story_prompt, continue_word, new=True)
+        if not script.startswith(cold_open[:80].split()[0]):
+            # Ensure cold open is present — prepend if model dropped it
+            if cold_open[:120] not in script[: max(len(cold_open) + 50, 200)]:
+                print("  Warning: model dropped cold open — prepending verbatim", flush=True)
+                script = f"{cold_open}\n\n{script}"
         word_count = len(script.split())
         print(f"  -> {word_count} words (target ~{target_words})", flush=True)
 
@@ -565,11 +670,12 @@ def main() -> None:
         prompt_lines, segments = align_scenes_to_narration(script, prompt_lines, pipeline)
         print(f"  Aligned to {len(prompt_lines)} narrated scenes (dropped unused tail prompts)", flush=True)
 
-        print("[Step 8] YouTube SEO (US)...", flush=True)
+        print("[Step 6] YouTube SEO (locked title)...", flush=True)
         seo_prompt = (
             load_prompt("youtube_seo.txt")
             .replace("{topic}", topic)
             .replace("{past_topics}", past_topics)
+            .replace("{locked_title}", locked_title)
         )
         seo_raw = ask(notebook_id, seo_prompt, new=True)
         (out / "youtube_seo_raw.txt").write_text(seo_raw, encoding="utf-8")
@@ -585,22 +691,29 @@ def main() -> None:
             except ValueError:
                 print("  Using fallback SEO metadata", flush=True)
                 seo = fallback_seo(topic)
+        seo["title"] = locked_title
 
         thumbnail_meta: dict | None = None
         if pipeline.get("generate_thumbnail", True):
-            print("[Step 6] Thumbnail prompt...", flush=True)
+            print("[Step 7] Thumbnail prompt (two-layer base)...", flush=True)
             thumb_prompt = (
                 load_prompt("thumbnail.txt")
                 .replace("{topic}", topic)
-                .replace("{title}", seo.get("title", topic))
+                .replace("{title}", locked_title)
+                .replace("{thumbnail_text}", thumbnail_text)
+                .replace("{thumbnail_scene}", thumbnail_scene)
             )
             thumb_raw = ask(notebook_id, thumb_prompt, new=True)
             thumb_line = " ".join(thumb_raw.strip().splitlines()[0].split()).strip('"')
+            if not thumb_line and thumbnail_scene:
+                thumb_line = thumbnail_scene
             if len(thumb_line) > 30:
                 thumbnail_meta = {
                     "prompt": thumb_line,
                     "topic": topic,
-                    "title": seo.get("title", topic),
+                    "title": locked_title,
+                    "thumbnail_text": thumbnail_text,
+                    "thumbnail_scene": thumbnail_scene,
                     "entity_refs": entity_refs,
                 }
                 print(f"  -> thumbnail prompt ({len(thumb_line.split())} words)", flush=True)
@@ -610,6 +723,16 @@ def main() -> None:
         (out / "script_raw.txt").write_text(script, encoding="utf-8")
     if not segments:
         segments = [clean_script_for_tts(t) for t in split_script_for_scenes(script, len(scenes))]
+
+    if args.dry_run:
+        thumbnail_meta = {
+            "prompt": hook.get("thumbnail_scene", ""),
+            "topic": topic,
+            "title": hook.get("title", topic),
+            "thumbnail_text": hook.get("thumbnail_text", ""),
+            "entity_refs": entity_refs,
+        }
+        save_json(out / "hook_package.json", hook)
 
     (out / "script.txt").write_text(script, encoding="utf-8")
     (out / "topics.txt").write_text(topic, encoding="utf-8")
@@ -640,6 +763,7 @@ def main() -> None:
         "scene_count": len(scenes),
         "image_style": pipeline.get("image_style"),
         "title": seo.get("title"),
+        "hook_title": hook.get("title", seo.get("title", topic)),
     }
     if not args.dry_run:
         meta["story_parts"] = story_parts

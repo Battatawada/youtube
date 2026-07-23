@@ -1,23 +1,23 @@
-Create YouTube SEO for **Doodlytical** — a US psychology stick-figure channel (~15 min explainers).
+Create YouTube SEO for **Doodlytical** — US psychology stick-figure channel (~15 min).
 
 Topic: {topic}
 
-Study the reference channel sources in this notebook — match how THEIR titles earn clicks (clear promise, specific mechanism, not generic AI phrasing).
+**LOCKED TITLE (use exactly — do not change a single character):**
+{locked_title}
 
-Past videos (differentiate — do not copy these titles):
+Past videos (differentiate in description/tags only):
 {past_topics}
 
-Output ONLY valid JSON (no markdown, no ** bold, no backticks):
+Output ONLY valid JSON (no markdown, no backticks):
 {
-  "title": "max 65 chars — specific hook a human would click in Home/Search",
-  "description": "MINIMUM 600 characters. Structure: (1) hook paragraph answering why viewer should watch, (2) 3-5 bullet points of what they will learn, (3) line 'Timestamps coming soon', (4) short subscribe CTA. Plain text only.",
+  "title": "{locked_title}",
+  "description": "MINIMUM 600 characters. (1) hook paragraph — why watch, (2) 3-5 bullets of what they learn, (3) 'Timestamps coming soon', (4) subscribe CTA. Plain text.",
   "tags": ["tag1", ... max 15, US search intent],
   "hashtags": ["#tag1", ... max 5]
 }
 
-Title rules:
-- Sound like a real US creator, not ChatGPT ("Unlock your potential" = bad)
-- Prefer: "The Psychology of…", "Why You…", "Entire … in 15 mins", specific behavior or emotion
-- No ALL CAPS, no emoji spam, no "You won't believe"
-
-Description: speak to the viewer's situation; mention Doodlytical once naturally; include subscribe CTA.
+Rules:
+- `title` field MUST equal the locked title exactly
+- Description: speak to viewer's situation; mention Doodlytical once naturally
+- Tags: specific mechanisms (procrastination, hypervigilance, etc.) not generic "mindset"
+- No ALL CAPS title, no emoji spam
