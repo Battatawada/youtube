@@ -64,7 +64,7 @@ def voice_supports_express_as(voice: str) -> bool:
 
 def _base_prosody(scene_index: int, is_hook_scene: bool) -> dict[str, str]:
     if is_hook_scene:
-        return {"rate": "-12%", "pitch": "-2st", "volume": "+5%"}
+        return {"rate": "-12%", "pitch": "-2Hz", "volume": "+5%"}
     return {"rate": "default", "pitch": "default", "volume": "default"}
 
 
@@ -79,12 +79,12 @@ def _sentence_prosody(sentence: str, base: dict[str, str]) -> dict[str, str]:
         rate = "+3%" if rate == "default" else rate
 
     if "?" in sentence:
-        pitch = "+1st" if pitch == "default" else pitch
+        pitch = "+2Hz" if pitch == "default" else pitch
         rate = "-5%" if rate == "default" else rate
 
     if any(w in TENSION_WORDS for w in re.findall(r"[a-z']+", lower)):
         rate = "-8%" if rate == "default" else rate
-        pitch = "-1st" if pitch == "default" else pitch
+        pitch = "-1Hz" if pitch == "default" else pitch
 
     first_word = re.sub(r"[^\w']", "", words[0].lower()) if words else ""
     if first_word in TWIST_WORDS:
